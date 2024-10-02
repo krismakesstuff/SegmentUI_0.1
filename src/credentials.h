@@ -1,0 +1,3 @@
+// WIFI credentials. CHANGE THESE TO YOUR NETWORK SSID AND PASSWORD
+#define CONFIG_WIFI_SSID "spaceballs"
+#define CONFIG_WIFI_PASSWORD "pewpew!69"

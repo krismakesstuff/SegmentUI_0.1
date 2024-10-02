@@ -1,0 +1,243 @@
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html {
+     font-family: Arial;
+     display: inline-block;
+     margin: 0px auto;
+     text-align: left;
+    }
+    h2 { font-size: 3.0rem; }
+    button { font-size: 0.25rem;}
+    p { font-size: 1.0rem; }
+    .units { font-size: 1.2rem; }
+    .dht-labels{
+      font-size: 1.5rem;
+      vertical-align:middle;
+      padding-bottom: 15px;
+    }
+
+    .toggle-button {
+      font-size: 1.5rem;
+    }
+
+    #led-grid {
+      display: grid;
+      grid-template-rows: repeat(5, 1fr);
+      gap: 1px;
+
+    }
+
+    .led-grid-row{
+      display: grid;
+      grid-template-columns: repeat(60, auto);
+      height: 1.5rem;
+      gap: 1px;
+    } 
+
+  </style>
+</head>
+<body>
+  <h2>ESP32 LEDS</h2>
+  <p>
+    5x60 LED Matrix controlled by ESP32
+
+  </p>
+  <br>
+  
+  <label for="all-color">Pick a color: </label>
+  <input type="color" id="all-picker" name="all-color" value="#ff0000" oninput="leftColorChosen()">
+  <p>Selected color: </p>
+  <p id="selected-all-color"></p>
+  <script>
+
+    function hexToRgb(hex) {
+      var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+      } : null;
+    }
+
+
+    function leftColorChosen() {
+      var xhr = new XMLHttpRequest();
+      var el = document.getElementById('all-picker');
+      var rgb = hexToRgb(el.value);
+      document.getElementById('selected-all-color').innerHTML = el.value;
+
+
+
+      var url = "/set-all-color?r=" + rgb.r + "&g=" + rgb.g + "&b=" + rgb.b;
+      xhr.open("GET", url, true);
+      // console.log('Sent GET message to /set-all-color?=' + el.value);
+      xhr.send();
+    }
+  </script>
+
+  <br>
+  <label for="brightness">Brightness: </label>
+  <input type="range" id="brightness" name="brightness" min="0" max="100" value="50" onchange="brightnessChanged()">
+
+  <script>
+    function brightnessChanged() {
+      var xhr = new XMLHttpRequest();
+      var el = document.getElementById('brightness');
+
+      var url = "/set-brightness?brightness=" + el.value;
+      xhr.open("GET", url, true);
+      console.log('Sent GET message to /set-brightness?brightness=' + el.value);
+      xhr.send();
+    }
+  </script>
+
+  <br>
+
+  
+
+  <!-- <br>
+  <h3>Left Segment</h3>
+   <br> 
+    <label for="left-color">Pick a color: </label>
+    <select name="left-color" id="left-color">
+    <option value="Red">Red</option>
+    <option value="Green">Green</option>
+    <option value="Blue">Blue</option>
+    </select> 
+    
+    <br>
+    
+    <h3>Right Segment</h3>
+    <br> 
+    <label for="right-color-names">Pick a color: </label>
+    <select name="right-color-names" id="right-color-names">
+    <option value="Red">Red</option>
+    <option value="Green">Green</option>
+    <option value="Blue">Blue</option>
+    </select>
+    <script>
+      document.getElementById('right-color-names').addEventListener('change', function() {
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", "/set-right-color?right-color=" + this.value, true);
+      console.log('Sent GET message to /set-right-color: ' + this.value);
+      xhr.send();
+      });
+    </script> 
+  
+  -->
+  
+  <br>
+  <button class="toggle-button" onclick="ToggleAllLeds()"> Toggle LEDS</button>
+  <script>
+    function ToggleAllLeds() {
+      console.log('Toggling LEDS');
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", "/toggle-all-leds", true);
+      xhr.send();
+    }
+  </script>
+
+  <button class="toggle-button" onclick="ToggleAnimation()"> Toggle Animation</button>
+  <script>
+    function ToggleAnimation() {
+      console.log('Toggling Animation');
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", "/toggle-animation", true);
+      xhr.send();
+    }
+  </script>
+
+  <br>
+
+  <label for="animation">Pick an animation: </label>
+  <select class="animtaion-selector" onchange="animationSelected(this.value)"> 
+    <option value="0">Blink</option>
+    <option value="1">Moving Dot</option>
+    <option value="2">Random Color Dots</option>
+    <option value="3">Color Wave</option>
+    <option value="4">Random Color Dots Wave</option>
+    <option value="5">Random Color Columns Wave</option>
+    <option value="6">Rotating Thirds</option>
+    <option value="7">Random Waterfall</option>
+    <option value="8" disabled>Opposite Color Dots</option>
+  </select>
+  <script>
+    function animationSelected(value) {
+      var xhr = new XMLHttpRequest();
+      console.log('Selected animation: ' + value); 
+      xhr.open("GET", "/set-animation?animation=" + value, true);
+      xhr.send();
+    }
+  </script>
+  <div>
+    <label for="led-grid">LED Grid</label>
+  </div>
+  
+  <div id="led-grid">
+  </div>
+  
+  <script>
+    function makeLedGrid(rows, cols) {
+      var grid = document.getElementById('led-grid');
+      for (var i = rows; i >= 0; i--) {
+        var row = document.createElement('div');
+        row.classList.add('led-grid-row');
+        for (var j = cols; j >= 0; j--) {
+          var button = document.createElement('button');
+          button.innerHTML = i + '-' + j;
+          row.appendChild(button);
+        }
+        grid.appendChild(row);
+      }
+    }
+    
+    // create led grid of buttons
+    makeLedGrid(4, 59);
+
+    var mouseDragging = false;
+    var ledGridButtons = document.querySelectorAll('#led-grid button');
+    
+    // add led-grid button event listeners
+    ledGridButtons.forEach(function(button) {
+      
+      button.addEventListener('mouseover', function() {
+        if (mouseDragging) {
+          var y = this.innerHTML.split('-')[0];
+          var x = this.innerHTML.split('-')[1];
+          var xhr = new XMLHttpRequest();
+          xhr.open("GET", "/toggle-led?x=" + x + "&y=" + y , true);
+          xhr.send();
+        }
+      });
+      
+      button.addEventListener('mousedown', function() {
+        mouseDragging = true;
+        var y = this.innerHTML.split('-')[0];
+        var x = this.innerHTML.split('-')[1];
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", "/toggle-led?x=" + x + "&y=" + y , true);
+        xhr.send();
+      });
+
+      button.addEventListener('mouseup', function() {
+        mouseDragging = false;
+      });
+
+      // button.addEventListener('click', function() {
+      //   var y = this.innerHTML.split('-')[0];
+      //   var x = this.innerHTML.split('-')[1];
+      //   var xhr = new XMLHttpRequest();
+      //   xhr.open("GET", "/toggle-led?x=" + x + "&y=" + y , true);
+      //   xhr.send();
+      // });
+    });
+  </script>
+
+</body>
+
+<!-- <script src="/src/script.js"></script> -->
+
+</html>)rawliteral";
