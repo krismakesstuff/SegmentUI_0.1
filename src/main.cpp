@@ -6,6 +6,9 @@
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include "ESPAsyncWebServer.h"
+#include <Preferences.h>
+
+#include <ArduinoOTA.h>
 
 #include "Globals.h"
 #include "Canvas/Canvas.h"
@@ -15,6 +18,21 @@
 
 const char* WIFI_SSID = CONFIG_WIFI_SSID;
 const char* WIFI_PASSWORD = CONFIG_WIFI_PASSWORD;
+
+// Preset storage
+Preferences preferences;
+#define NUM_PRESETS 5
+
+struct Preset {
+  uint8_t r, g, b;
+  uint8_t brightness;
+  uint8_t animation;
+  bool animating;
+};
+
+Preset presets[NUM_PRESETS];
+CRGB currentColor = CRGB::Red;  // Track current color
+uint8_t currentAnimation = 1;   // Track current animation type
 
 
 //set port
@@ -39,22 +57,54 @@ Rectangle fullCanvas{0, 0, ROW_LENGTH, NUM_ROWS};
 //testing, NOT MY CODE
 unsigned long currentTime = millis();
 // Previous time
-unsigned long previousTime = 0; 
+unsigned long previousTime = 0;
 // Define timeout time in milliseconds (example: 2000ms = 2s)
 const long timeoutTime = 2000;
 
-void setup() 
+// Load presets from flash
+void loadPresets() {
+  preferences.begin("presets", true);  // read-only
+  for (int i = 0; i < NUM_PRESETS; i++) {
+    String key = "p" + String(i);
+    presets[i].r = preferences.getUChar((key + "r").c_str(), 255);
+    presets[i].g = preferences.getUChar((key + "g").c_str(), 0);
+    presets[i].b = preferences.getUChar((key + "b").c_str(), 0);
+    presets[i].brightness = preferences.getUChar((key + "br").c_str(), 50);
+    presets[i].animation = preferences.getUChar((key + "an").c_str(), 1);
+    presets[i].animating = preferences.getBool((key + "on").c_str(), false);
+  }
+  preferences.end();
+}
+
+// Save a single preset to flash
+void savePreset(int index) {
+  if (index < 0 || index >= NUM_PRESETS) return;
+  preferences.begin("presets", false);  // read-write
+  String key = "p" + String(index);
+  preferences.putUChar((key + "r").c_str(), presets[index].r);
+  preferences.putUChar((key + "g").c_str(), presets[index].g);
+  preferences.putUChar((key + "b").c_str(), presets[index].b);
+  preferences.putUChar((key + "br").c_str(), presets[index].brightness);
+  preferences.putUChar((key + "an").c_str(), presets[index].animation);
+  preferences.putBool((key + "on").c_str(), presets[index].animating);
+  preferences.end();
+}
+
+void setup()
 {
   //connect to serial monitor
   Serial.begin(9600);
   Serial.println("Connected");
+
+  // Load saved presets
+  loadPresets();
 
   //add LED and data pin to FastLED
   FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(leds, NUM_LEDS);
   // build canvas
   canvas.buildCanvas(NUM_ROWS, ROW_LENGTH);
 
-  // load default canvas state and set to draw  
+  // load default canvas state and set to draw
   canvas.setBrightness(DEFAULT_BRIGHTNESS);
   canvas.fillCanvas(fullCanvas, INITIAL_CANVAS_COLOR);
   canvas.setDrawState(true);
@@ -76,12 +126,31 @@ void setup()
     Serial.print(".");
   }
 
-  // Print IP address 
+  // Print IP address
   Serial.println("");
   Serial.println("Wifi Connected.");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
+  // Initialize OTA updates
+  ArduinoOTA.setHostname("segmentui-led");
+  ArduinoOTA.setPassword(CONFIG_OTA_PASSWORD);
+
+  ArduinoOTA.onStart([]() {
+    canvas.setAnimate(false);  // Stop animations during update
+    Serial.println("OTA Update starting...");
+  });
+
+  ArduinoOTA.onEnd([]() {
+    Serial.println("OTA Update complete!");
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("OTA Error[%u]: ", error);
+  });
+
+  ArduinoOTA.begin();
+  Serial.println("OTA Ready");
 
   // Set up server
 
@@ -148,7 +217,8 @@ void setup()
         Serial.println("Has left color param..");
       #endif
       //color = request->getParam(r)->value();
-      CRGB newColor {request->getParam("r")->value().toInt(), request->getParam("g")->value().toInt(), request->getParam("b")->value().toInt()};
+      CRGB newColor {(uint8_t)request->getParam("r")->value().toInt(), (uint8_t)request->getParam("g")->value().toInt(), (uint8_t)request->getParam("b")->value().toInt()};
+      currentColor = newColor;  // Track current color
       #if PRINT_SERVER_PARAMS
       Serial.println("Color: " + String(newColor.r) + ", " + String(newColor.g) + ", " + String(newColor.b));
       #endif
@@ -157,7 +227,7 @@ void setup()
       canvas.fillCanvas(fullCanvas, newColor);
       canvas.setDrawState(true);
 
-      request->send(200, "text/plain", "Left color set to " + newColor );
+      request->send(200, "text/plain", "Left color set to RGB(" + String(newColor.r) + "," + String(newColor.g) + "," + String(newColor.b) + ")");
     } else {
       Serial.println("No left color param");
       request->send(400, "text/plain", "Missing color parameter");
@@ -230,6 +300,7 @@ void setup()
     if (request->hasParam("animation")) {
 
       int animation = request->getParam("animation")->value().toInt();
+      currentAnimation = animation;  // Track current animation
       #if PRINT_SERVER_PARAMS
       Serial.println("Animation: " + String(animation));
       #endif
@@ -274,14 +345,99 @@ void setup()
     }
   });
 
+  // Status endpoint - returns JSON with current state
+  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String json = "{";
+    json += "\"brightness\":" + String(canvas.getCurrentBrightness()) + ",";
+    json += "\"animating\":" + String(canvas.animating() ? "true" : "false") + ",";
+    json += "\"ledsOn\":" + String(canvas.getCurrentBrightness() > 0 ? "true" : "false") + ",";
+    json += "\"r\":" + String(currentColor.r) + ",";
+    json += "\"g\":" + String(currentColor.g) + ",";
+    json += "\"b\":" + String(currentColor.b) + ",";
+    json += "\"animation\":" + String(currentAnimation);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
 
+  // Get preset
+  server.on("/preset/get", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (request->hasParam("id")) {
+      int id = request->getParam("id")->value().toInt();
+      if (id >= 0 && id < NUM_PRESETS) {
+        Preset& p = presets[id];
+        String json = "{";
+        json += "\"r\":" + String(p.r) + ",";
+        json += "\"g\":" + String(p.g) + ",";
+        json += "\"b\":" + String(p.b) + ",";
+        json += "\"brightness\":" + String(p.brightness) + ",";
+        json += "\"animation\":" + String(p.animation) + ",";
+        json += "\"animating\":" + String(p.animating ? "true" : "false");
+        json += "}";
+        request->send(200, "application/json", json);
+        return;
+      }
+    }
+    request->send(400, "text/plain", "Invalid preset id");
+  });
+
+  // Load preset - applies preset to current state
+  server.on("/preset/load", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (request->hasParam("id")) {
+      int id = request->getParam("id")->value().toInt();
+      if (id >= 0 && id < NUM_PRESETS) {
+        Preset& p = presets[id];
+        currentColor = CRGB(p.r, p.g, p.b);
+        currentAnimation = p.animation;
+        canvas.setBrightness(p.brightness);
+        canvas.fillCanvas(fullCanvas, currentColor);
+        canvas.setAnimate(p.animating);
+        // Set animation type
+        switch(p.animation) {
+          case 0: canvas.setAnimationType(AnimationType::Blink); break;
+          case 1: canvas.setAnimationType(AnimationType::MovingDot); break;
+          case 2: canvas.setAnimationType(AnimationType::RandomColorDots); break;
+          case 3: canvas.setAnimationType(AnimationType::ColorWave); break;
+          case 4: canvas.setAnimationType(AnimationType::RandomColorDotsWave); break;
+          case 5: canvas.setAnimationType(AnimationType::RandomColorColumnsWave); break;
+          case 6: canvas.setAnimationType(AnimationType::RotatingThirds); break;
+          case 7: canvas.setAnimationType(AnimationType::RandomWaterfall); break;
+          default: canvas.setAnimationType(AnimationType::Blink); break;
+        }
+        canvas.setDrawState(true);
+        request->send(200, "text/plain", "Loaded preset " + String(id));
+        return;
+      }
+    }
+    request->send(400, "text/plain", "Invalid preset id");
+  });
+
+  // Save preset - saves current state to preset
+  server.on("/preset/save", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (request->hasParam("id")) {
+      int id = request->getParam("id")->value().toInt();
+      if (id >= 0 && id < NUM_PRESETS) {
+        presets[id].r = currentColor.r;
+        presets[id].g = currentColor.g;
+        presets[id].b = currentColor.b;
+        presets[id].brightness = canvas.getCurrentBrightness();
+        presets[id].animation = currentAnimation;
+        presets[id].animating = canvas.animating();
+        savePreset(id);
+        request->send(200, "text/plain", "Saved preset " + String(id));
+        return;
+      }
+    }
+    request->send(400, "text/plain", "Invalid preset id");
+  });
 
   // Start server
   server.begin();
 }
  
-void loop() 
+void loop()
 {
+  ArduinoOTA.handle();  // Handle OTA updates
+
   #if PRINT_CANVAS_DRAW_LOOP
     Serial.println("Drawing canvas");
   #endif

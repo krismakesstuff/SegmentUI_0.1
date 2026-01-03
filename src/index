@@ -2,242 +2,399 @@ const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LED Control</title>
   <style>
-    html {
-     font-family: Arial;
-     display: inline-block;
-     margin: 0px auto;
-     text-align: left;
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #111;
+      color: #eee;
+      padding: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
     }
-    h2 { font-size: 3.0rem; }
-    button { font-size: 0.25rem;}
-    p { font-size: 1.0rem; }
-    .units { font-size: 1.2rem; }
-    .dht-labels{
-      font-size: 1.5rem;
-      vertical-align:middle;
-      padding-bottom: 15px;
+    h1 { font-size: 1.5rem; font-weight: 500; margin-bottom: 8px; }
+    .subtitle { color: #888; font-size: 0.875rem; margin-bottom: 24px; }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .control-group {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 16px;
+      min-width: 200px;
+      flex: 1;
+    }
+    .control-group.scenes {
+      flex: none;
+      width: fit-content;
+      min-width: auto;
+      order: -1;
+    }
+    @media (max-width: 600px) {
+      .control-group.scenes {
+        width: 100%;
+      }
+      .preset-row {
+        justify-content: space-between;
+      }
+      .preset-btn {
+        flex: 1;
+      }
+    }
+    .control-group label {
+      display: block;
+      color: #888;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
     }
 
-    .toggle-button {
-      font-size: 1.5rem;
+    input[type="color"] {
+      width: 100%;
+      height: 40px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: transparent;
+    }
+    input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+    input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
+
+    input[type="range"] {
+      width: 100%;
+      height: 6px;
+      border-radius: 3px;
+      background: #333;
+      outline: none;
+      -webkit-appearance: none;
+      margin-top: 8px;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      cursor: pointer;
     }
 
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #eee;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    select:focus { outline: none; border-color: #666; }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+    }
+    button {
+      flex: 1;
+      padding: 10px 16px;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #eee;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    button:hover { background: #333; }
+    button:active { background: #444; }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #333;
+    }
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: #888;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #444;
+    }
+    .status-dot.online { background: #4ade80; }
+    .status-dot.on { background: #facc15; }
+    .status-dot.anim { background: #60a5fa; }
+
+    .preset-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .preset-btn {
+      width: 36px;
+      height: 36px;
+      min-width: 36px;
+      flex: none;
+      padding: 0;
+      font-weight: 600;
+      font-size: 0.875rem;
+    }
+    .preset-btn.save-mode {
+      border-color: #f59e0b;
+      color: #f59e0b;
+    }
+    .save-btn {
+      background: #222;
+      border-color: #444;
+    }
+    .save-btn.active {
+      background: #f59e0b;
+      border-color: #f59e0b;
+      color: #111;
+    }
+
+    .grid-section {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .grid-section label {
+      display: block;
+      color: #888;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
     #led-grid {
       display: grid;
       grid-template-rows: repeat(5, 1fr);
-      gap: 1px;
-
+      gap: 2px;
+      overflow-x: auto;
     }
-
-    .led-grid-row{
+    .led-grid-row {
       display: grid;
-      grid-template-columns: repeat(60, auto);
-      height: 1.5rem;
-      gap: 1px;
-    } 
-
+      grid-template-columns: repeat(60, 1fr);
+      gap: 2px;
+    }
+    #led-grid button {
+      width: 16px;
+      height: 16px;
+      min-width: 16px;
+      padding: 0;
+      font-size: 0;
+      background: #333;
+      border: none;
+      border-radius: 2px;
+    }
+    #led-grid button:hover { background: #555; }
   </style>
 </head>
 <body>
-  <h2>ESP32 LEDS</h2>
-  <p>
-    5x60 LED Matrix controlled by ESP32
+  <h1>LED Control</h1>
+  <p class="subtitle">5x60 LED Matrix</p>
 
-  </p>
-  <br>
-  
-  <label for="all-color">Pick a color: </label>
-  <input type="color" id="all-picker" name="all-color" value="#ff0000" oninput="leftColorChosen()">
-  <p>Selected color: </p>
-  <p id="selected-all-color"></p>
+  <div class="controls">
+    <div class="control-group">
+      <label>Color & Brightness</label>
+      <input type="color" id="all-picker" value="#ff0000" oninput="setColor()">
+      <input type="range" id="brightness" min="0" max="100" value="50" oninput="setBrightness()">
+    </div>
+
+    <div class="control-group">
+      <label>Animation</label>
+      <select id="animation" onchange="setAnimation(this.value)">
+        <option value="0">Blink</option>
+        <option value="1" selected>Moving Dot</option>
+        <option value="2">Random Color Dots</option>
+        <option value="3">Color Wave</option>
+        <option value="4">Random Dots Wave</option>
+        <option value="5">Color Columns Wave</option>
+        <option value="6">Rotating Thirds</option>
+        <option value="7">Random Waterfall</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>Status</label>
+      <div class="status-row">
+        <div class="status-item">
+          <div class="status-dot" id="dot-online"></div>
+          <span id="status-conn">Offline</span>
+        </div>
+        <div class="status-item">
+          <div class="status-dot" id="dot-leds"></div>
+          <span id="status-leds">LEDs Off</span>
+        </div>
+        <div class="status-item">
+          <div class="status-dot" id="dot-anim"></div>
+          <span id="status-anim">Anim Off</span>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button onclick="toggleLeds()">Toggle LEDs</button>
+        <button onclick="toggleAnimation()">Toggle Anim</button>
+      </div>
+    </div>
+
+    <div class="control-group scenes">
+      <label>Scenes</label>
+      <div class="preset-row">
+        <button class="preset-btn" onclick="presetClick(0)">1</button>
+        <button class="preset-btn" onclick="presetClick(1)">2</button>
+        <button class="preset-btn" onclick="presetClick(2)">3</button>
+        <button class="preset-btn" onclick="presetClick(3)">4</button>
+        <button class="preset-btn" onclick="presetClick(4)">5</button>
+      </div>
+      <button class="save-btn" id="save-btn" onclick="toggleSaveMode()">Save Mode</button>
+    </div>
+  </div>
+
+  <div class="grid-section">
+    <label>LED Grid (click & drag to draw)</label>
+    <div id="led-grid"></div>
+  </div>
+
   <script>
+    var saveMode = false;
+    var presetBtns = document.querySelectorAll('.preset-btn');
+    var saveBtn = document.getElementById('save-btn');
 
     function hexToRgb(hex) {
-      var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-      return result ? {
-        r: parseInt(result[1], 16),
-        g: parseInt(result[2], 16),
-        b: parseInt(result[3], 16)
-      } : null;
+      var r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return r ? {r:parseInt(r[1],16), g:parseInt(r[2],16), b:parseInt(r[3],16)} : null;
+    }
+    function rgbToHex(r, g, b) {
+      return '#' + [r, g, b].map(function(x) {
+        var hex = x.toString(16);
+        return hex.length === 1 ? '0' + hex : hex;
+      }).join('');
+    }
+    function send(url, cb) {
+      var x = new XMLHttpRequest();
+      x.open("GET", url, true);
+      if (cb) x.onload = function() { if (x.status === 200) cb(x.responseText); };
+      x.send();
     }
 
-
-    function leftColorChosen() {
-      var xhr = new XMLHttpRequest();
-      var el = document.getElementById('all-picker');
-      var rgb = hexToRgb(el.value);
-      document.getElementById('selected-all-color').innerHTML = el.value;
-
-
-
-      var url = "/set-all-color?r=" + rgb.r + "&g=" + rgb.g + "&b=" + rgb.b;
-      xhr.open("GET", url, true);
-      // console.log('Sent GET message to /set-all-color?=' + el.value);
-      xhr.send();
+    function setColor() {
+      var rgb = hexToRgb(document.getElementById('all-picker').value);
+      send("/set-all-color?r="+rgb.r+"&g="+rgb.g+"&b="+rgb.b);
     }
-  </script>
-
-  <br>
-  <label for="brightness">Brightness: </label>
-  <input type="range" id="brightness" name="brightness" min="0" max="100" value="50" onchange="brightnessChanged()">
-
-  <script>
-    function brightnessChanged() {
-      var xhr = new XMLHttpRequest();
-      var el = document.getElementById('brightness');
-
-      var url = "/set-brightness?brightness=" + el.value;
-      xhr.open("GET", url, true);
-      console.log('Sent GET message to /set-brightness?brightness=' + el.value);
-      xhr.send();
+    function setBrightness() {
+      send("/set-brightness?brightness="+document.getElementById('brightness').value, pollStatus);
     }
-  </script>
+    function setAnimation(v) { send("/set-animation?animation="+v); }
+    function toggleLeds() { send("/toggle-all-leds", pollStatus); }
+    function toggleAnimation() { send("/toggle-animation", pollStatus); }
 
-  <br>
-
-  
-
-  <!-- <br>
-  <h3>Left Segment</h3>
-   <br> 
-    <label for="left-color">Pick a color: </label>
-    <select name="left-color" id="left-color">
-    <option value="Red">Red</option>
-    <option value="Green">Green</option>
-    <option value="Blue">Blue</option>
-    </select> 
-    
-    <br>
-    
-    <h3>Right Segment</h3>
-    <br> 
-    <label for="right-color-names">Pick a color: </label>
-    <select name="right-color-names" id="right-color-names">
-    <option value="Red">Red</option>
-    <option value="Green">Green</option>
-    <option value="Blue">Blue</option>
-    </select>
-    <script>
-      document.getElementById('right-color-names').addEventListener('change', function() {
-      var xhr = new XMLHttpRequest();
-      xhr.open("GET", "/set-right-color?right-color=" + this.value, true);
-      console.log('Sent GET message to /set-right-color: ' + this.value);
-      xhr.send();
+    function toggleSaveMode() {
+      saveMode = !saveMode;
+      saveBtn.classList.toggle('active', saveMode);
+      presetBtns.forEach(function(btn) {
+        btn.classList.toggle('save-mode', saveMode);
       });
-    </script> 
-  
-  -->
-  
-  <br>
-  <button class="toggle-button" onclick="ToggleAllLeds()"> Toggle LEDS</button>
-  <script>
-    function ToggleAllLeds() {
-      console.log('Toggling LEDS');
-      var xhr = new XMLHttpRequest();
-      xhr.open("GET", "/toggle-all-leds", true);
-      xhr.send();
     }
-  </script>
 
-  <button class="toggle-button" onclick="ToggleAnimation()"> Toggle Animation</button>
-  <script>
-    function ToggleAnimation() {
-      console.log('Toggling Animation');
-      var xhr = new XMLHttpRequest();
-      xhr.open("GET", "/toggle-animation", true);
-      xhr.send();
-    }
-  </script>
-
-  <br>
-
-  <label for="animation">Pick an animation: </label>
-  <select class="animtaion-selector" onchange="animationSelected(this.value)"> 
-    <option value="0">Blink</option>
-    <option value="1">Moving Dot</option>
-    <option value="2">Random Color Dots</option>
-    <option value="3">Color Wave</option>
-    <option value="4">Random Color Dots Wave</option>
-    <option value="5">Random Color Columns Wave</option>
-    <option value="6">Rotating Thirds</option>
-    <option value="7">Random Waterfall</option>
-    <option value="8" disabled>Opposite Color Dots</option>
-  </select>
-  <script>
-    function animationSelected(value) {
-      var xhr = new XMLHttpRequest();
-      console.log('Selected animation: ' + value); 
-      xhr.open("GET", "/set-animation?animation=" + value, true);
-      xhr.send();
-    }
-  </script>
-  <div>
-    <label for="led-grid">LED Grid</label>
-  </div>
-  
-  <div id="led-grid">
-  </div>
-  
-  <script>
-    function makeLedGrid(rows, cols) {
-      var grid = document.getElementById('led-grid');
-      for (var i = rows; i >= 0; i--) {
-        var row = document.createElement('div');
-        row.classList.add('led-grid-row');
-        for (var j = cols; j >= 0; j--) {
-          var button = document.createElement('button');
-          button.innerHTML = i + '-' + j;
-          row.appendChild(button);
-        }
-        grid.appendChild(row);
+    function presetClick(id) {
+      if (saveMode) {
+        send("/preset/save?id=" + id, function() {
+          toggleSaveMode();
+        });
+      } else {
+        send("/preset/load?id=" + id, pollStatus);
       }
     }
-    
-    // create led grid of buttons
-    makeLedGrid(4, 59);
 
-    var mouseDragging = false;
-    var ledGridButtons = document.querySelectorAll('#led-grid button');
-    
-    // add led-grid button event listeners
-    ledGridButtons.forEach(function(button) {
-      
-      button.addEventListener('mouseover', function() {
-        if (mouseDragging) {
-          var y = this.innerHTML.split('-')[0];
-          var x = this.innerHTML.split('-')[1];
-          var xhr = new XMLHttpRequest();
-          xhr.open("GET", "/toggle-led?x=" + x + "&y=" + y , true);
-          xhr.send();
+    // Status polling
+    var dotOnline = document.getElementById('dot-online');
+    var dotLeds = document.getElementById('dot-leds');
+    var dotAnim = document.getElementById('dot-anim');
+    var statusConn = document.getElementById('status-conn');
+    var statusLeds = document.getElementById('status-leds');
+    var statusAnim = document.getElementById('status-anim');
+
+    function pollStatus() {
+      var x = new XMLHttpRequest();
+      x.open("GET", "/status", true);
+      x.timeout = 3000;
+      x.onload = function() {
+        if (x.status === 200) {
+          var s = JSON.parse(x.responseText);
+          dotOnline.classList.add('online');
+          statusConn.textContent = 'Online';
+          if (s.ledsOn) {
+            dotLeds.classList.add('on');
+            statusLeds.textContent = 'LEDs On';
+          } else {
+            dotLeds.classList.remove('on');
+            statusLeds.textContent = 'LEDs Off';
+          }
+          if (s.animating) {
+            dotAnim.classList.add('anim');
+            statusAnim.textContent = 'Anim On';
+          } else {
+            dotAnim.classList.remove('anim');
+            statusAnim.textContent = 'Anim Off';
+          }
+          document.getElementById('brightness').value = s.brightness;
+          document.getElementById('all-picker').value = rgbToHex(s.r, s.g, s.b);
+          document.getElementById('animation').value = s.animation;
         }
-      });
-      
-      button.addEventListener('mousedown', function() {
-        mouseDragging = true;
-        var y = this.innerHTML.split('-')[0];
-        var x = this.innerHTML.split('-')[1];
-        var xhr = new XMLHttpRequest();
-        xhr.open("GET", "/toggle-led?x=" + x + "&y=" + y , true);
-        xhr.send();
-      });
+      };
+      x.onerror = x.ontimeout = function() {
+        dotOnline.classList.remove('online');
+        statusConn.textContent = 'Offline';
+      };
+      x.send();
+    }
+    pollStatus();
+    setInterval(pollStatus, 5000);
 
-      button.addEventListener('mouseup', function() {
-        mouseDragging = false;
-      });
+    // Build grid
+    var grid = document.getElementById('led-grid');
+    for (var i=4; i>=0; i--) {
+      var row = document.createElement('div');
+      row.className = 'led-grid-row';
+      for (var j=59; j>=0; j--) {
+        var btn = document.createElement('button');
+        btn.dataset.x = j;
+        btn.dataset.y = i;
+        row.appendChild(btn);
+      }
+      grid.appendChild(row);
+    }
 
-      // button.addEventListener('click', function() {
-      //   var y = this.innerHTML.split('-')[0];
-      //   var x = this.innerHTML.split('-')[1];
-      //   var xhr = new XMLHttpRequest();
-      //   xhr.open("GET", "/toggle-led?x=" + x + "&y=" + y , true);
-      //   xhr.send();
-      // });
+    // Grid drawing
+    var dragging = false;
+    document.addEventListener('mouseup', function() { dragging = false; });
+    grid.addEventListener('mousedown', function(e) {
+      if (e.target.tagName === 'BUTTON') {
+        dragging = true;
+        send("/toggle-led?x="+e.target.dataset.x+"&y="+e.target.dataset.y);
+      }
+    });
+    grid.addEventListener('mouseover', function(e) {
+      if (dragging && e.target.tagName === 'BUTTON') {
+        send("/toggle-led?x="+e.target.dataset.x+"&y="+e.target.dataset.y);
+      }
     });
   </script>
-
 </body>
-
-<!-- <script src="/src/script.js"></script> -->
-
 </html>)rawliteral";

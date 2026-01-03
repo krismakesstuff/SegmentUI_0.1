@@ -1,0 +1,5 @@
+; Local overrides - this file is gitignored
+; Copy this file to platformio_override.ini and fill in your values
+
+[env:esp32doit-devkit-v1-ota]
+upload_flags = --auth=your-ota-password
