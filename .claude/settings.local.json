@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:/Users/krisc/.platformio/penv/Scripts/pio.exe run -t upload -d \"c:/Users/krisc/Documents/Code Projects/ESP32/SegmentUI_0.1\")",
+      "Bash(C:/Users/krisc/.platformio/penv/Scripts/pio.exe run:*)"
+    ]
+  }
+}

@@ -10,9 +10,9 @@ THIS IS A WIP! This is a side project. Some things may not work and will change.
 ## Controlling LEDS
 <!-- Instructions on how to use the project -->
 Current UI
-![SegmentUI Screenshot](SegmentUI_01_Screenshot_10022024.png)
+![SegmentUI Screenshot](SegmentUI_Screenshot_01022026.png)
 
-This UI is very simple and has almost no styling. There's some basic color picking, brightness, toggling of animation, toggling of all LEDs, an animation selector and a grid of all the LEDs that lets you turn on individual LEDs. 
+The UI includes color picking, brightness control, animation selection, LED toggling, scene presets (save/load states), and a grid to control individual LEDs. 
 
 To access the UI, you will need to use the IP address that is printed out from your ESP32 serial monitor and paste that into your browser.
 
