@@ -519,7 +519,8 @@ void setup()
 
   // Get Claude status: GET /claude/status
   server.on("/claude/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String json = "{\"active\":" + String(claudeStatus.isActive() ? "true" : "false") + ",\"rows\":[";
+    String json = "{\"enabled\":" + String(claudeStatus.isEnabled() ? "true" : "false") + ",";
+    json += "\"active\":" + String(claudeStatus.isActive() ? "true" : "false") + ",\"rows\":[";
     for (int i = 0; i < NUM_ROWS; i++) {
       ClaudeState state = claudeStatus.getRowState(i);
       String stateStr;
@@ -536,6 +537,20 @@ void setup()
     }
     json += "]}";
     request->send(200, "application/json", json);
+  });
+
+  // Enable Claude mode: GET /claude/enable
+  server.on("/claude/enable", HTTP_GET, [](AsyncWebServerRequest *request) {
+    claudeStatus.setEnabled(true);
+    request->send(200, "application/json", "{\"success\":true,\"enabled\":true}");
+  });
+
+  // Disable Claude mode: GET /claude/disable
+  server.on("/claude/disable", HTTP_GET, [](AsyncWebServerRequest *request) {
+    claudeStatus.setEnabled(false);
+    claudeStatus.clearAll();
+    FastLED.show();
+    request->send(200, "application/json", "{\"success\":true,\"enabled\":false}");
   });
 
   // Start server

@@ -9,25 +9,29 @@
 // Claude session states
 enum class ClaudeState {
     Offline,    // Session not active - LEDs off
-    Idle,       // Session active, waiting for input - dim blue
+    Idle,       // Session active, waiting for input - single cyan LED blinking
     Thinking,   // Processing request - yellow pulse
     Tool,       // Running a tool - green solid
     Waiting,    // Waiting for user approval - cyan breathing
     Error       // Error occurred - red blink
 };
 
-// State colors (as defined in plan)
-#define CLAUDE_COLOR_OFFLINE CRGB::Black
-#define CLAUDE_COLOR_IDLE    CRGB(0x00, 0x11, 0x33)  // Dim blue
-#define CLAUDE_COLOR_THINKING CRGB(0xFF, 0xAA, 0x00) // Yellow
-#define CLAUDE_COLOR_TOOL    CRGB(0x00, 0xFF, 0x00)  // Green
-#define CLAUDE_COLOR_WAITING CRGB(0x00, 0xFF, 0xFF)  // Cyan
-#define CLAUDE_COLOR_ERROR   CRGB(0xFF, 0x00, 0x00)  // Red
+// Max brightness (0-255) - 50% = 128
+#define CLAUDE_MAX_BRIGHTNESS 128
 
-// Animation speeds (ms)
-#define CLAUDE_PULSE_SPEED 1500    // Slow pulse for thinking
-#define CLAUDE_BREATHE_SPEED 2000  // Breathing for waiting
-#define CLAUDE_BLINK_SPEED 300     // Fast blink for error
+// State colors (dimmed for large display)
+#define CLAUDE_COLOR_OFFLINE CRGB::Black
+#define CLAUDE_COLOR_IDLE    CRGB(0x00, 0xC0, 0xFF)  // Bright cyan (same as waiting, scaled by brightness)
+#define CLAUDE_COLOR_WORKING_A CRGB(0x00, 0x80, 0x00) // Green (dimmed)
+#define CLAUDE_COLOR_WORKING_B CRGB(0x80, 0x55, 0x00) // Yellow/amber (dimmed)
+#define CLAUDE_COLOR_WAITING CRGB(0x00, 0xC0, 0xFF)  // Bright cyan (scaled by brightness)
+#define CLAUDE_COLOR_ERROR   CRGB(0x80, 0x00, 0x00)  // Dimmed red
+
+// Animation speeds (ms) - slower for subtlety
+#define CLAUDE_WORK_CYCLE_SPEED 4000   // Slow color alternation for working
+#define CLAUDE_BREATHE_SPEED 333       // Breathing for waiting
+#define CLAUDE_ERROR_FADE_SPEED 3000   // Gentle fade for error
+#define CLAUDE_IDLE_BLINK_SPEED 300    // Single LED blink for idle (10% faster than waiting)
 
 class ClaudeStatus {
 public:
@@ -48,8 +52,12 @@ public:
     // Update animations - call from loop()
     void update();
 
-    // Check if Claude status mode is active (any row not offline)
+    // Check if Claude status mode is active (enabled AND any row not offline)
     bool isActive();
+
+    // Enable/disable Claude mode
+    void setEnabled(bool state);
+    bool isEnabled();
 
     // Apply current states to LED array
     void applyToLeds();
@@ -61,6 +69,7 @@ public:
     static CRGB getStateColor(ClaudeState state);
 
 private:
+    bool enabled;                   // Whether Claude mode is enabled via UI
     ClaudeState rowStates[NUM_ROWS];
     CRGB rowColors[NUM_ROWS];       // Custom colors (optional override)
     bool useCustomColor[NUM_ROWS];  // Whether to use custom color

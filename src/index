@@ -320,6 +320,119 @@ const char index_html[] PROGMEM = R"rawliteral(
       text-align: center;
       padding: 16px;
     }
+
+    /* Claude Status Section */
+    .claude-section {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .claude-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .claude-header label {
+      display: block;
+      color: #888;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 0;
+    }
+    .claude-header .btn-row { flex: none; gap: 6px; }
+    .claude-header button {
+      flex: none;
+      padding: 6px 12px;
+      font-size: 0.75rem;
+    }
+    .claude-toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      background: #444;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .claude-toggle.on { background: #a78bfa; }
+    .claude-toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .claude-toggle.on::after { transform: translateX(20px); }
+    .claude-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #222;
+      border: 1px solid #333;
+      border-radius: 4px;
+      margin-bottom: 6px;
+    }
+    .claude-row:last-child { margin-bottom: 0; }
+    .claude-row-label {
+      font-size: 0.875rem;
+      color: #eee;
+      font-weight: 500;
+    }
+    .claude-state-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .claude-state-text {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .claude-state-text.offline { color: #666; }
+    .claude-state-text.idle { color: #6699cc; }
+    .claude-state-text.thinking { color: #7cb342; }
+    .claude-state-text.tool { color: #7cb342; }
+    .claude-state-text.waiting { color: #26c6da; }
+    .claude-state-text.error { color: #ef5350; }
+    .claude-state-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #333;
+    }
+    .claude-state-dot.offline { background: #333; }
+    .claude-state-dot.idle { background: #1a3a5c; }
+    .claude-state-dot.thinking { background: #7cb342; animation: gentle-pulse 4s ease-in-out infinite; }
+    .claude-state-dot.tool { background: #7cb342; animation: gentle-pulse 4s ease-in-out infinite; }
+    .claude-state-dot.waiting { background: #26c6da; animation: gentle-breathe 4s ease-in-out infinite; }
+    .claude-state-dot.error { background: #ef5350; animation: gentle-fade 3s ease-in-out infinite; }
+    @keyframes gentle-pulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+    @keyframes gentle-breathe {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+    @keyframes gentle-fade {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    .claude-empty {
+      color: #666;
+      font-size: 0.875rem;
+      text-align: center;
+      padding: 16px;
+    }
   </style>
 </head>
 <body>
@@ -346,6 +459,17 @@ const char index_html[] PROGMEM = R"rawliteral(
     <div id="kasa-devices">
       <div class="kasa-empty">No devices. Click "Scan" to discover.</div>
     </div>
+  </div>
+
+  <div class="claude-section">
+    <div class="claude-header">
+      <label>Claude Status</label>
+      <div class="btn-row">
+        <div class="claude-toggle" id="claude-toggle" onclick="claudeToggle()"></div>
+        <button onclick="claudeResync()">Refresh</button>
+      </div>
+    </div>
+    <div id="claude-rows"></div>
   </div>
 
   <div class="controls">
@@ -637,6 +761,115 @@ const char index_html[] PROGMEM = R"rawliteral(
     });
     // Poll Kasa device states every 30 seconds (uses cached state, fast)
     setInterval(pollKasaDevices, 30000);
+
+    // Claude Status management
+    var claudeEnabled = false;
+    var claudeSessions = []; // From session tracker with name, state
+
+    function claudeToggle() {
+      var endpoint = claudeEnabled ? '/claude/disable' : '/claude/enable';
+      send(endpoint, function(resp) {
+        var data = JSON.parse(resp);
+        if (data.success) {
+          claudeEnabled = data.enabled;
+          renderClaudeRows();
+          // If enabling, ask session tracker to resync active sessions
+          if (claudeEnabled) {
+            var x = new XMLHttpRequest();
+            x.open('GET', 'http://localhost:5544/resync', true);
+            x.onload = function() { claudeRefresh(); };
+            x.send();
+          }
+        }
+      });
+    }
+
+    function claudeRefresh() {
+      // First get enabled state from ESP32
+      send('/claude/status', function(resp) {
+        var data = JSON.parse(resp);
+        claudeEnabled = data.enabled;
+
+        // Then get session details from session tracker
+        var x = new XMLHttpRequest();
+        x.open('GET', 'http://localhost:5544/status', true);
+        x.timeout = 2000;
+        x.onload = function() {
+          if (x.status === 200) {
+            var trackerData = JSON.parse(x.responseText);
+            claudeSessions = trackerData.rows || [];
+          }
+          renderClaudeRows();
+        };
+        x.onerror = x.ontimeout = function() {
+          // Fallback to ESP32-only data
+          claudeSessions = data.rows.map(function(state, i) {
+            return { row: i, state: state, name: null };
+          });
+          renderClaudeRows();
+        };
+        x.send();
+      });
+    }
+
+    function claudeResync() {
+      // Resync session tracker state to ESP32 (doesn't clear anything)
+      var x = new XMLHttpRequest();
+      x.open('GET', 'http://localhost:5544/resync', true);
+      x.onload = function() { claudeRefresh(); };
+      x.send();
+    }
+
+    function getStateLabel(state) {
+      switch(state) {
+        case 'idle': return 'Idle';
+        case 'thinking': return 'Working';
+        case 'tool': return 'Working';
+        case 'waiting': return 'Needs Attention';
+        case 'error': return 'Error';
+        default: return 'Offline';
+      }
+    }
+
+    function renderClaudeRows() {
+      var toggle = document.getElementById('claude-toggle');
+      toggle.classList.toggle('on', claudeEnabled);
+
+      var container = document.getElementById('claude-rows');
+      if (!claudeEnabled) {
+        container.innerHTML = '<div class="claude-empty">Claude mode disabled</div>';
+        return;
+      }
+
+      // Filter to only show active sessions, reversed to match physical LED layout
+      var activeSessions = claudeSessions.filter(function(s) { return s.state !== 'offline'; });
+      activeSessions.sort(function(a, b) { return b.row - a.row; });
+
+      if (activeSessions.length === 0) {
+        container.innerHTML = '<div class="claude-empty">No active sessions</div>';
+        return;
+      }
+
+      var html = '';
+      for (var i = 0; i < activeSessions.length; i++) {
+        var session = activeSessions[i];
+        var name = session.name || ('Session ' + session.row);
+        var state = session.state;
+        var stateLabel = getStateLabel(state);
+        html += '<div class="claude-row">';
+        html += '<span class="claude-row-label">' + name + '</span>';
+        html += '<div class="claude-state-info">';
+        html += '<span class="claude-state-text ' + state + '">' + stateLabel + '</span>';
+        html += '<div class="claude-state-dot ' + state + '"></div>';
+        html += '</div>';
+        html += '</div>';
+      }
+      container.innerHTML = html;
+    }
+
+    // Initial Claude status load and polling
+    claudeRefresh();
+    setInterval(claudeRefresh, 2000);
 
     // Build grid
     var grid = document.getElementById('led-grid');

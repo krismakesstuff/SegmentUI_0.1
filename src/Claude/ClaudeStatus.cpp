@@ -3,6 +3,7 @@
 extern CRGB leds[];
 
 ClaudeStatus::ClaudeStatus() {
+    enabled = false;
     lastUpdateTime = 0;
     animationPhase = 0.0;
 
@@ -41,12 +42,21 @@ void ClaudeStatus::clearAll() {
 }
 
 bool ClaudeStatus::isActive() {
+    if (!enabled) return false;
     for (int i = 0; i < NUM_ROWS; i++) {
         if (rowStates[i] != ClaudeState::Offline) {
             return true;
         }
     }
     return false;
+}
+
+void ClaudeStatus::setEnabled(bool state) {
+    enabled = state;
+}
+
+bool ClaudeStatus::isEnabled() {
+    return enabled;
 }
 
 ClaudeState ClaudeStatus::parseState(const String& stateStr) {
@@ -61,8 +71,8 @@ ClaudeState ClaudeStatus::parseState(const String& stateStr) {
 CRGB ClaudeStatus::getStateColor(ClaudeState state) {
     switch (state) {
         case ClaudeState::Idle:     return CLAUDE_COLOR_IDLE;
-        case ClaudeState::Thinking: return CLAUDE_COLOR_THINKING;
-        case ClaudeState::Tool:     return CLAUDE_COLOR_TOOL;
+        case ClaudeState::Thinking: return CLAUDE_COLOR_WORKING_A;  // Will be animated
+        case ClaudeState::Tool:     return CLAUDE_COLOR_WORKING_A;  // Will be animated
         case ClaudeState::Waiting:  return CLAUDE_COLOR_WAITING;
         case ClaudeState::Error:    return CLAUDE_COLOR_ERROR;
         case ClaudeState::Offline:
@@ -71,26 +81,35 @@ CRGB ClaudeStatus::getStateColor(ClaudeState state) {
 }
 
 uint8_t ClaudeStatus::getAnimatedBrightness(ClaudeState state, float phase) {
+    // Minimum brightness is 50% of max
+    const float MIN_BRIGHTNESS = 0.50;
+
     switch (state) {
-        case ClaudeState::Thinking: {
-            // Slow pulse: sine wave between 50% and 100%
-            float brightness = 0.5 + 0.5 * sin(phase * 2 * PI);
-            return (uint8_t)(brightness * 255);
+        case ClaudeState::Thinking:
+        case ClaudeState::Tool: {
+            // Working: gentle pulse between 50% and 100% of max
+            float brightness = 0.5 + 0.5 * (sin(phase * 2 * PI) + 1.0) / 2.0;
+            return (uint8_t)(brightness * CLAUDE_MAX_BRIGHTNESS);
         }
         case ClaudeState::Waiting: {
-            // Breathing: smooth sine wave between 20% and 100%
-            float brightness = 0.2 + 0.8 * sin(phase * 2 * PI);
-            return (uint8_t)(brightness * 255);
+            // Breathing: smooth sine wave between 25% and 100% of max
+            float wave = (sin(phase * 2 * PI) + 1.0) / 2.0;  // 0 to 1
+            float brightness = MIN_BRIGHTNESS + (1.0 - MIN_BRIGHTNESS) * wave;
+            return (uint8_t)(brightness * CLAUDE_MAX_BRIGHTNESS);
         }
         case ClaudeState::Error: {
-            // Fast blink: on/off
-            return (phase < 0.5) ? 255 : 0;
+            // Gentle fade: sine wave between 25% and 100% of max
+            float wave = (sin(phase * 2 * PI) + 1.0) / 2.0;  // 0 to 1
+            float brightness = MIN_BRIGHTNESS + (1.0 - MIN_BRIGHTNESS) * wave;
+            return (uint8_t)(brightness * CLAUDE_MAX_BRIGHTNESS);
         }
-        case ClaudeState::Idle:
-        case ClaudeState::Tool:
+        case ClaudeState::Idle: {
+            // Blinking: smooth sine wave between 0% and 100% of max
+            float wave = (sin(phase * 2 * PI) + 1.0) / 2.0;  // 0 to 1
+            return (uint8_t)(wave * CLAUDE_MAX_BRIGHTNESS);
+        }
         default:
-            // Solid - full brightness
-            return 255;
+            return CLAUDE_MAX_BRIGHTNESS;
     }
 }
 
@@ -135,23 +154,50 @@ void ClaudeStatus::applyToLeds() {
             continue;
         }
 
-        // Get base color
-        CRGB color = useCustomColor[row] ? rowColors[row] : getStateColor(state);
-
         // Calculate phase for this state's animation speed
         float statePhase;
+        CRGB color;
+
         switch (state) {
             case ClaudeState::Thinking:
-                statePhase = fmod(animationPhase * 1000.0 / CLAUDE_PULSE_SPEED, 1.0);
+            case ClaudeState::Tool: {
+                // Working: alternate between green and yellow smoothly
+                statePhase = fmod(animationPhase * 1000.0 / CLAUDE_WORK_CYCLE_SPEED, 1.0);
+                // Blend between colors using sine wave
+                float blendAmount = (sin(statePhase * 2 * PI) + 1.0) / 2.0;  // 0 to 1
+                CRGB colorA = CLAUDE_COLOR_WORKING_A;
+                CRGB colorB = CLAUDE_COLOR_WORKING_B;
+                color = CRGB(
+                    colorA.r + (uint8_t)((colorB.r - colorA.r) * blendAmount),
+                    colorA.g + (uint8_t)((colorB.g - colorA.g) * blendAmount),
+                    colorA.b + (uint8_t)((colorB.b - colorA.b) * blendAmount)
+                );
                 break;
+            }
             case ClaudeState::Waiting:
                 statePhase = fmod(animationPhase * 1000.0 / CLAUDE_BREATHE_SPEED, 1.0);
+                color = useCustomColor[row] ? rowColors[row] : CLAUDE_COLOR_WAITING;
                 break;
             case ClaudeState::Error:
-                statePhase = fmod(animationPhase * 1000.0 / CLAUDE_BLINK_SPEED, 1.0);
+                statePhase = fmod(animationPhase * 1000.0 / CLAUDE_ERROR_FADE_SPEED, 1.0);
+                color = useCustomColor[row] ? rowColors[row] : CLAUDE_COLOR_ERROR;
                 break;
+            case ClaudeState::Idle: {
+                statePhase = fmod(animationPhase * 1000.0 / CLAUDE_IDLE_BLINK_SPEED, 1.0);
+                color = useCustomColor[row] ? rowColors[row] : CLAUDE_COLOR_IDLE;
+                uint8_t brightness = getAnimatedBrightness(state, statePhase);
+                // Single LED at the start of the row
+                fillRow(row, CRGB::Black, 0);  // Clear the row first
+                int firstLed = row * ROW_LENGTH;
+                CRGB scaledColor = color;
+                scaledColor.nscale8(brightness);
+                leds[firstLed] = scaledColor;
+                continue;  // Skip the fillRow at the end
+            }
             default:
                 statePhase = 0;
+                color = CRGB::Black;
+                break;
         }
 
         uint8_t brightness = getAnimatedBrightness(state, statePhase);

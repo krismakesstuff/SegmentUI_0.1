@@ -5,6 +5,7 @@ const path = require('path');
 
 // Load config
 const configPath = path.join(__dirname, 'config.json');
+const sessionsPath = path.join(__dirname, 'sessions.json');
 let config = {
   esp32_ip: '192.168.1.100',
   port: 5544,
@@ -22,12 +23,71 @@ if (fs.existsSync(configPath)) {
 const app = express();
 app.use(express.json());
 
+// Enable CORS for web UI
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+});
+
 // Session to row mapping
-// Key: session_id, Value: { row: number, lastState: string, lastUpdate: timestamp }
+// Key: session_id, Value: { row: number, lastState: string, lastUpdate: timestamp, cwd: string, name: string }
 const sessions = new Map();
 
 // Track which rows are in use
-const rowsInUse = new Array(config.max_sessions).fill(null);
+let rowsInUse = new Array(config.max_sessions).fill(null);
+
+// Extract project name from cwd path
+function getProjectName(cwd) {
+  if (!cwd) return 'Unknown';
+  // Get the last folder name from the path
+  const parts = cwd.replace(/\\/g, '/').split('/').filter(p => p);
+  return parts[parts.length - 1] || 'Unknown';
+}
+
+// Save sessions to disk
+function saveSessions() {
+  const data = {
+    sessions: Array.from(sessions.entries()).map(([id, session]) => ({
+      sessionId: id,
+      ...session
+    })),
+    rowsInUse: rowsInUse
+  };
+  try {
+    fs.writeFileSync(sessionsPath, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error('Error saving sessions:', e.message);
+  }
+}
+
+// Load sessions from disk
+function loadSessions() {
+  if (!fs.existsSync(sessionsPath)) return;
+  try {
+    const data = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+    if (data.sessions) {
+      data.sessions.forEach(s => {
+        sessions.set(s.sessionId, {
+          row: s.row,
+          lastState: s.lastState,
+          lastUpdate: s.lastUpdate,
+          cwd: s.cwd,
+          name: s.name
+        });
+      });
+    }
+    if (data.rowsInUse) {
+      rowsInUse = data.rowsInUse;
+    }
+    console.log(`Loaded ${sessions.size} sessions from disk`);
+  } catch (e) {
+    console.error('Error loading sessions:', e.message);
+  }
+}
+
+// Load persisted sessions on startup
+loadSessions();
 
 // Find next available row
 function getNextFreeRow() {
@@ -40,10 +100,16 @@ function getNextFreeRow() {
 }
 
 // Assign row to session
-function assignRow(sessionId) {
+function assignRow(sessionId, cwd) {
   // Check if session already has a row
   if (sessions.has(sessionId)) {
-    return sessions.get(sessionId).row;
+    const session = sessions.get(sessionId);
+    // Update cwd if provided and not already set
+    if (cwd && !session.cwd) {
+      session.cwd = cwd;
+      session.name = getProjectName(cwd);
+    }
+    return session.row;
   }
 
   const row = getNextFreeRow();
@@ -52,14 +118,18 @@ function assignRow(sessionId) {
     return -1;
   }
 
+  const name = getProjectName(cwd);
   rowsInUse[row] = sessionId;
   sessions.set(sessionId, {
     row,
     lastState: 'idle',
-    lastUpdate: Date.now()
+    lastUpdate: Date.now(),
+    cwd: cwd || '',
+    name: name
   });
 
-  console.log(`Assigned row ${row} to session ${sessionId}`);
+  console.log(`Assigned row ${row} to session ${sessionId} (${name})`);
+  saveSessions();
   return row;
 }
 
@@ -73,6 +143,7 @@ function freeRow(sessionId) {
   rowsInUse[session.row] = null;
   sessions.delete(sessionId);
   console.log(`Freed row ${session.row} from session ${sessionId}`);
+  saveSessions();
   return session.row;
 }
 
@@ -102,22 +173,33 @@ async function clearEsp32Row(row) {
 }
 
 // Map hook events to LED states
-function hookEventToState(hookEvent, toolName) {
+function hookEventToState(hookEvent, toolName, eventData) {
   switch (hookEvent) {
     case 'SessionStart':
       return 'idle';
 
     case 'PreToolUse':
+      // AskUserQuestion means Claude is waiting for user response
+      if (toolName === 'AskUserQuestion') {
+        return 'waiting';
+      }
       return 'tool';
 
     case 'PostToolUse':
-      return 'idle';
+      // After tool completes, Claude is thinking about the result
+      return 'thinking';
 
     case 'Notification':
-      // Notifications usually mean waiting for user input
-      return 'waiting';
+      // Check notification type
+      if (eventData && eventData.notification_type === 'idle_prompt') {
+        // "Claude is waiting for your input" = idle state
+        return 'idle';
+      }
+      // Other notifications are informational, don't change state
+      return null;
 
     case 'Stop':
+      // Claude is done, waiting for user input
       return 'idle';
 
     case 'SessionEnd':
@@ -136,6 +218,7 @@ app.post('/event', async (req, res) => {
 
     const sessionId = event.session_id;
     const hookEvent = event.hook_event_name;
+    const cwd = event.cwd;
 
     if (!sessionId) {
       return res.status(400).json({ error: 'Missing session_id' });
@@ -146,7 +229,7 @@ app.post('/event', async (req, res) => {
 
     if (hookEvent === 'SessionStart') {
       // Assign a row to this new session
-      row = assignRow(sessionId);
+      row = assignRow(sessionId, cwd);
       if (row === -1) {
         return res.status(503).json({ error: 'No free rows available' });
       }
@@ -162,14 +245,20 @@ app.post('/event', async (req, res) => {
       // Get existing session
       if (!sessions.has(sessionId)) {
         // Session not registered, auto-register it
-        row = assignRow(sessionId);
+        row = assignRow(sessionId, cwd);
         if (row === -1) {
           return res.status(503).json({ error: 'No free rows available' });
         }
       } else {
         row = sessions.get(sessionId).row;
+        // Update cwd if we have it now
+        const session = sessions.get(sessionId);
+        if (cwd && !session.cwd) {
+          session.cwd = cwd;
+          session.name = getProjectName(cwd);
+        }
       }
-      state = hookEventToState(hookEvent, event.tool_name);
+      state = hookEventToState(hookEvent, event.tool_name, event);
     }
 
     if (state && row !== undefined && row >= 0) {
@@ -178,6 +267,7 @@ app.post('/event', async (req, res) => {
       if (session) {
         session.lastState = state;
         session.lastUpdate = Date.now();
+        saveSessions();
       }
 
       // Send to ESP32
@@ -200,11 +290,15 @@ app.post('/event', async (req, res) => {
 app.get('/status', (req, res) => {
   const status = {
     sessions: [],
-    rows: rowsInUse.map((sessionId, index) => ({
-      row: index,
-      sessionId: sessionId || null,
-      state: sessionId && sessions.has(sessionId) ? sessions.get(sessionId).lastState : 'offline'
-    }))
+    rows: rowsInUse.map((sessionId, index) => {
+      const session = sessionId && sessions.has(sessionId) ? sessions.get(sessionId) : null;
+      return {
+        row: index,
+        sessionId: sessionId || null,
+        state: session ? session.lastState : 'offline',
+        name: session ? session.name : null
+      };
+    })
   };
 
   sessions.forEach((value, key) => {
@@ -212,7 +306,9 @@ app.get('/status', (req, res) => {
       sessionId: key,
       row: value.row,
       lastState: value.lastState,
-      lastUpdate: new Date(value.lastUpdate).toISOString()
+      lastUpdate: new Date(value.lastUpdate).toISOString(),
+      cwd: value.cwd,
+      name: value.name
     });
   });
 
@@ -240,6 +336,23 @@ app.post('/config', (req, res) => {
   }
 });
 
+// GET /resync - re-send current state for all active sessions to ESP32
+app.get('/resync', async (req, res) => {
+  console.log('Resyncing all sessions to ESP32...');
+  const results = [];
+
+  for (const [sessionId, session] of sessions) {
+    try {
+      await updateEsp32(session.row, session.lastState);
+      results.push({ row: session.row, state: session.lastState, success: true });
+    } catch (err) {
+      results.push({ row: session.row, state: session.lastState, success: false, error: err.message });
+    }
+  }
+
+  res.json({ success: true, synced: results.length, results });
+});
+
 // GET /clear - clear all sessions and ESP32 rows
 app.get('/clear', async (req, res) => {
   // Clear all sessions
@@ -247,6 +360,7 @@ app.get('/clear', async (req, res) => {
   for (let i = 0; i < config.max_sessions; i++) {
     rowsInUse[i] = null;
   }
+  saveSessions();
 
   // Clear ESP32
   try {
@@ -272,5 +386,6 @@ app.listen(config.port, () => {
   console.log('  GET  /status   - View session-to-row mapping');
   console.log('  GET  /config   - Get current config');
   console.log('  POST /config   - Update ESP32 IP');
+  console.log('  GET  /resync   - Re-send state for all active sessions');
   console.log('  GET  /clear    - Clear all sessions');
 });
