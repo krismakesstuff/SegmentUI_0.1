@@ -13,8 +13,35 @@ const char index_html[] PROGMEM = R"rawliteral(
       max-width: 1200px;
       margin: 0 auto;
     }
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
     h1 { font-size: 1.5rem; font-weight: 500; margin-bottom: 8px; }
-    .subtitle { color: #888; font-size: 0.875rem; margin-bottom: 24px; }
+    .subtitle { color: #888; font-size: 0.875rem; }
+    .master-power {
+      max-width: 48px;
+      max-height: 48px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #222;
+      border: 2px solid #444;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .master-power:hover { background: #333; border-color: #555; }
+    .master-power.on { background: #4ade80; border-color: #22c55e; }
+    .master-power svg { width: 24px; height: 24px; }
+    .master-power path { stroke: #888; transition: stroke 0.2s; }
+    .master-power:hover path { stroke: #eee; }
+    .master-power.on path { stroke: #111; }
 
     .controls {
       display: flex;
@@ -34,7 +61,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       flex: none;
       width: fit-content;
       min-width: auto;
-      order: -1;
     }
     @media (max-width: 600px) {
       .control-group.scenes {
@@ -204,33 +230,125 @@ const char index_html[] PROGMEM = R"rawliteral(
       border-radius: 2px;
     }
     #led-grid button:hover { background: #555; }
+
+    .kasa-section {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .kasa-section label {
+      display: block;
+      color: #888;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+    .kasa-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .kasa-header label { margin-bottom: 0; }
+    .kasa-header .btn-row { flex: none; gap: 6px; }
+    .kasa-header button {
+      flex: none;
+      padding: 6px 12px;
+      font-size: 0.75rem;
+    }
+    .kasa-device {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: #222;
+      border: 1px solid #333;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    .kasa-device:last-child { margin-bottom: 0; }
+    .kasa-device-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .kasa-device-name {
+      font-size: 0.875rem;
+      color: #eee;
+    }
+    .kasa-device-ip {
+      font-size: 0.7rem;
+      color: #666;
+    }
+    .kasa-device-offline {
+      opacity: 0.5;
+    }
+    .kasa-toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      background: #444;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .kasa-toggle.on { background: #4ade80; }
+    .kasa-toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .kasa-toggle.on::after { transform: translateX(20px); }
+    .kasa-empty {
+      color: #666;
+      font-size: 0.875rem;
+      text-align: center;
+      padding: 16px;
+    }
+    .kasa-scanning {
+      color: #888;
+      font-size: 0.875rem;
+      text-align: center;
+      padding: 16px;
+    }
   </style>
 </head>
 <body>
-  <h1>LED Control</h1>
-  <p class="subtitle">5x60 LED Matrix</p>
+  <div class="header-row">
+    <div>
+      <h1>LED Control</h1>
+      <p class="subtitle">5x60 LED Matrix</p>
+    </div>
+    <button class="master-power" id="master-power" onclick="toggleAllLights()">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round">
+        <path d="M12 2v10M18.4 6.6a9 9 0 1 1-12.8 0"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="kasa-section">
+    <div class="kasa-header">
+      <label>Smart Plugs</label>
+      <div class="btn-row">
+        <button onclick="kasaRefresh()">Refresh</button>
+        <button onclick="kasaScan()">Scan</button>
+      </div>
+    </div>
+    <div id="kasa-devices">
+      <div class="kasa-empty">No devices. Click "Scan" to discover.</div>
+    </div>
+  </div>
 
   <div class="controls">
-    <div class="control-group">
-      <label>Color & Brightness</label>
-      <input type="color" id="all-picker" value="#ff0000" oninput="setColor()">
-      <input type="range" id="brightness" min="0" max="100" value="50" oninput="setBrightness()">
-    </div>
-
-    <div class="control-group">
-      <label>Animation</label>
-      <select id="animation" onchange="setAnimation(this.value)">
-        <option value="0">Blink</option>
-        <option value="1" selected>Moving Dot</option>
-        <option value="2">Random Color Dots</option>
-        <option value="3">Color Wave</option>
-        <option value="4">Random Dots Wave</option>
-        <option value="5">Color Columns Wave</option>
-        <option value="6">Rotating Thirds</option>
-        <option value="7">Random Waterfall</option>
-      </select>
-    </div>
-
     <div class="control-group">
       <label>Status</label>
       <div class="status-row">
@@ -263,6 +381,26 @@ const char index_html[] PROGMEM = R"rawliteral(
         <button class="preset-btn" onclick="presetClick(4)">5</button>
       </div>
       <button class="save-btn" id="save-btn" onclick="toggleSaveMode()">Save Mode</button>
+    </div>
+
+    <div class="control-group">
+      <label>Color & Brightness</label>
+      <input type="color" id="all-picker" value="#ff0000" oninput="setColor()">
+      <input type="range" id="brightness" min="0" max="100" value="50" oninput="setBrightness()">
+    </div>
+
+    <div class="control-group">
+      <label>Animation</label>
+      <select id="animation" onchange="setAnimation(this.value)">
+        <option value="0">Blink</option>
+        <option value="1" selected>Moving Dot</option>
+        <option value="2">Random Color Dots</option>
+        <option value="3">Color Wave</option>
+        <option value="4">Random Dots Wave</option>
+        <option value="5">Color Columns Wave</option>
+        <option value="6">Rotating Thirds</option>
+        <option value="7">Random Waterfall</option>
+      </select>
     </div>
   </div>
 
@@ -304,6 +442,44 @@ const char index_html[] PROGMEM = R"rawliteral(
     function toggleLeds() { send("/toggle-all-leds", pollStatus); }
     function toggleAnimation() { send("/toggle-animation", pollStatus); }
 
+    // Master power - toggles LEDs and light Kasa devices (excludes fans)
+    var masterOn = false;
+    var excludeFromMaster = ['Kris Room Fan'];
+
+    function isLight(device) {
+      return excludeFromMaster.indexOf(device.alias) === -1;
+    }
+
+    function toggleAllLights() {
+      // Determine target state: if anything is on, turn all off; otherwise turn all on
+      var ledsOn = document.getElementById('dot-leds').classList.contains('on');
+      var anyLightOn = kasaDevices.some(function(d) { return d.state && d.online && isLight(d); });
+      var targetState = !(ledsOn || anyLightOn);
+
+      // Toggle LEDs if needed
+      if (ledsOn !== targetState) {
+        send("/toggle-all-leds", pollStatus);
+      }
+
+      // Toggle Kasa light devices that need to change (exclude fans)
+      for (var i = 0; i < kasaDevices.length; i++) {
+        var d = kasaDevices[i];
+        if (d.online && isLight(d) && d.state !== targetState) {
+          d.state = targetState;
+          send("/kasa/toggle?id=" + i);
+        }
+      }
+      renderKasaDevices();
+    }
+
+    function updateMasterPower() {
+      var btn = document.getElementById('master-power');
+      var ledsOn = document.getElementById('dot-leds').classList.contains('on');
+      var anyLightOn = kasaDevices.some(function(d) { return d.state && d.online && isLight(d); });
+      masterOn = ledsOn || anyLightOn;
+      btn.classList.toggle('on', masterOn);
+    }
+
     function toggleSaveMode() {
       saveMode = !saveMode;
       saveBtn.classList.toggle('active', saveMode);
@@ -320,6 +496,90 @@ const char index_html[] PROGMEM = R"rawliteral(
       } else {
         send("/preset/load?id=" + id, pollStatus);
       }
+    }
+
+    // Kasa device management
+    var kasaDevices = [];
+    var kasaScanning = false;
+
+    function kasaScan() {
+      if (kasaScanning) return;
+      kasaScanning = true;
+      var container = document.getElementById('kasa-devices');
+      container.innerHTML = '<div class="kasa-scanning">Scanning network...</div>';
+      send("/kasa/scan", function(resp) {
+        kasaScanning = false;
+        var data = JSON.parse(resp);
+        kasaDevices = data.devices || [];
+        renderKasaDevices();
+      });
+    }
+
+    function kasaToggle(id) {
+      var dev = kasaDevices[id];
+      if (!dev || !dev.online) return;
+      // Optimistic update
+      dev.state = !dev.state;
+      renderKasaDevices();
+      send("/kasa/toggle?id=" + id, function(resp) {
+        var data = JSON.parse(resp);
+        if (!data.success) {
+          // Revert on failure
+          dev.state = !dev.state;
+          renderKasaDevices();
+        }
+      });
+    }
+
+    // Alias overrides for display names
+    var aliasOverrides = {
+      'Kris Studio Fan': 'Kris Studio Lamp'
+    };
+
+    function getDisplayName(alias) {
+      return aliasOverrides[alias] || alias;
+    }
+
+    function renderKasaDevices() {
+      var container = document.getElementById('kasa-devices');
+      if (kasaDevices.length === 0) {
+        container.innerHTML = '<div class="kasa-empty">No devices. Click "Scan" to discover.</div>';
+        return;
+      }
+      var html = '';
+      for (var i = 0; i < kasaDevices.length; i++) {
+        var d = kasaDevices[i];
+        var displayName = getDisplayName(d.alias);
+        var offlineClass = d.online ? '' : ' kasa-device-offline';
+        var toggleClass = d.state ? 'kasa-toggle on' : 'kasa-toggle';
+        html += '<div class="kasa-device' + offlineClass + '">';
+        html += '<div class="kasa-device-info">';
+        html += '<span class="kasa-device-name">' + displayName + '</span>';
+        html += '<span class="kasa-device-ip">' + d.ip + (d.online ? '' : ' (offline)') + '</span>';
+        html += '</div>';
+        html += '<div class="' + toggleClass + '" onclick="kasaToggle(' + i + ')"></div>';
+        html += '</div>';
+      }
+      container.innerHTML = html;
+      updateMasterPower();
+    }
+
+    function pollKasaDevices() {
+      if (kasaDevices.length === 0) return;
+      // Use cached endpoint - fast, non-blocking
+      send("/kasa/devices", function(resp) {
+        kasaDevices = JSON.parse(resp);
+        renderKasaDevices();
+      });
+    }
+
+    function kasaRefresh() {
+      if (kasaDevices.length === 0) return;
+      // Manual refresh - queries all devices, can be slow
+      send("/kasa/refresh", function(resp) {
+        kasaDevices = JSON.parse(resp);
+        renderKasaDevices();
+      });
     }
 
     // Status polling
@@ -356,6 +616,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           document.getElementById('brightness').value = s.brightness;
           document.getElementById('all-picker').value = rgbToHex(s.r, s.g, s.b);
           document.getElementById('animation').value = s.animation;
+          updateMasterPower();
         }
       };
       x.onerror = x.ontimeout = function() {
@@ -366,6 +627,16 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
     pollStatus();
     setInterval(pollStatus, 5000);
+
+    // Load saved Kasa devices on page load
+    send("/kasa/devices", function(resp) {
+      kasaDevices = JSON.parse(resp);
+      if (kasaDevices.length > 0) {
+        renderKasaDevices();
+      }
+    });
+    // Poll Kasa device states every 30 seconds (uses cached state, fast)
+    setInterval(pollKasaDevices, 30000);
 
     // Build grid
     var grid = document.getElementById('led-grid');

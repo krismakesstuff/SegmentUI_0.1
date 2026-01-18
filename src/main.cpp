@@ -12,6 +12,7 @@
 
 #include "Globals.h"
 #include "Canvas/Canvas.h"
+#include "Kasa/KasaManager.h"
 #include "index"
 #include "credentials.h"
 
@@ -46,6 +47,10 @@ CRGB leds[NUM_LEDS] = {0};
 
 //create canvas
 Canvas canvas{};
+
+// Kasa device manager
+KasaManager kasaManager;
+
 // areas to draw on canvas
 Rectangle rightHalf{0, 0, ROW_LENGTH/2, NUM_ROWS}; 
 Rectangle leftHalf{ROW_LENGTH/2, 0, ROW_LENGTH/2, NUM_ROWS}; 
@@ -151,6 +156,9 @@ void setup()
 
   ArduinoOTA.begin();
   Serial.println("OTA Ready");
+
+  // Initialize Kasa device manager
+  kasaManager.begin();
 
   // Set up server
 
@@ -428,6 +436,35 @@ void setup()
       }
     }
     request->send(400, "text/plain", "Invalid preset id");
+  });
+
+  // Kasa device endpoints
+  server.on("/kasa/scan", HTTP_GET, [](AsyncWebServerRequest *request) {
+    int count = kasaManager.scanDevices();
+    String json = "{\"count\":" + String(count) + ",\"devices\":" + kasaManager.getDevicesJson() + "}";
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/kasa/devices", HTTP_GET, [](AsyncWebServerRequest *request) {
+    // Return cached state without blocking network calls
+    request->send(200, "application/json", kasaManager.getDevicesJson());
+  });
+
+  server.on("/kasa/refresh", HTTP_GET, [](AsyncWebServerRequest *request) {
+    // Manual refresh - can be slow
+    kasaManager.refreshStates();
+    request->send(200, "application/json", kasaManager.getDevicesJson());
+  });
+
+  server.on("/kasa/toggle", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (request->hasParam("id")) {
+      int id = request->getParam("id")->value().toInt();
+      bool success = kasaManager.toggleDevice(id);
+      String json = "{\"success\":" + String(success ? "true" : "false") + "}";
+      request->send(200, "application/json", json);
+    } else {
+      request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing id parameter\"}");
+    }
   });
 
   // Start server
