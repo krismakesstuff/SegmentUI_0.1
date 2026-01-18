@@ -12,6 +12,7 @@ ClaudeStatus::ClaudeStatus() {
         rowStates[i] = ClaudeState::Offline;
         rowColors[i] = CRGB::Black;
         useCustomColor[i] = false;
+        contextPercent[i] = 0;
     }
 }
 
@@ -33,10 +34,21 @@ ClaudeState ClaudeStatus::getRowState(int row) {
     return rowStates[row];
 }
 
+void ClaudeStatus::setContextPercent(int row, uint8_t percent) {
+    if (row < 0 || row >= NUM_ROWS) return;
+    contextPercent[row] = min(percent, (uint8_t)100);
+}
+
+uint8_t ClaudeStatus::getContextPercent(int row) {
+    if (row < 0 || row >= NUM_ROWS) return 0;
+    return contextPercent[row];
+}
+
 void ClaudeStatus::clearAll() {
     for (int i = 0; i < NUM_ROWS; i++) {
         rowStates[i] = ClaudeState::Offline;
         useCustomColor[i] = false;
+        contextPercent[i] = 0;
     }
     applyToLeds();
 }
@@ -130,6 +142,31 @@ void ClaudeStatus::fillRow(int row, CRGB color, uint8_t brightness) {
     }
 }
 
+void ClaudeStatus::fillRowWithProgress(int row, CRGB statusColor, uint8_t statusBrightness, uint8_t percent) {
+    if (row < 0 || row >= NUM_ROWS) return;
+
+    int startIndex = row * ROW_LENGTH;
+    int progressLeds = (percent * ROW_LENGTH) / 100;  // How many LEDs for progress bar
+
+    // Progress bar at constant brightness
+    CRGB scaledProgress = CLAUDE_COLOR_PROGRESS;
+    scaledProgress.nscale8(CLAUDE_MAX_BRIGHTNESS);
+
+    // Status color with animation brightness
+    CRGB scaledStatus = statusColor;
+    scaledStatus.nscale8(statusBrightness);
+
+    // Fill progress bar (left side)
+    for (int i = 0; i < progressLeds; i++) {
+        leds[startIndex + i] = scaledProgress;
+    }
+
+    // Fill status animation (right side)
+    for (int i = progressLeds; i < ROW_LENGTH; i++) {
+        leds[startIndex + i] = scaledStatus;
+    }
+}
+
 void ClaudeStatus::update() {
     unsigned long currentTime = millis();
 
@@ -148,6 +185,7 @@ void ClaudeStatus::update() {
 void ClaudeStatus::applyToLeds() {
     for (int row = 0; row < NUM_ROWS; row++) {
         ClaudeState state = rowStates[row];
+        uint8_t percent = contextPercent[row];
 
         if (state == ClaudeState::Offline) {
             fillRow(row, CRGB::Black, 0);
@@ -172,28 +210,69 @@ void ClaudeStatus::applyToLeds() {
                     colorA.g + (uint8_t)((colorB.g - colorA.g) * blendAmount),
                     colorA.b + (uint8_t)((colorB.b - colorA.b) * blendAmount)
                 );
-                break;
+                uint8_t brightness = getAnimatedBrightness(state, statePhase);
+                fillRowWithProgress(row, color, brightness, percent);
+                continue;
             }
-            case ClaudeState::Waiting:
+            case ClaudeState::Waiting: {
                 statePhase = fmod(animationPhase * 1000.0 / CLAUDE_BREATHE_SPEED, 1.0);
                 color = useCustomColor[row] ? rowColors[row] : CLAUDE_COLOR_WAITING;
-                break;
-            case ClaudeState::Error:
+                uint8_t brightness = getAnimatedBrightness(state, statePhase);
+                fillRowWithProgress(row, color, brightness, percent);
+                continue;
+            }
+            case ClaudeState::Error: {
                 statePhase = fmod(animationPhase * 1000.0 / CLAUDE_ERROR_FADE_SPEED, 1.0);
                 color = useCustomColor[row] ? rowColors[row] : CLAUDE_COLOR_ERROR;
-                break;
+                uint8_t brightness = getAnimatedBrightness(state, statePhase);
+                fillRowWithProgress(row, color, brightness, percent);
+                continue;
+            }
             case ClaudeState::Idle: {
                 statePhase = fmod(animationPhase * 1000.0 / CLAUDE_IDLE_BLINK_SPEED, 1.0);
                 color = useCustomColor[row] ? rowColors[row] : CLAUDE_COLOR_IDLE;
                 uint8_t brightness = getAnimatedBrightness(state, statePhase);
-                // Single LED - first in daisy chain for this row (zigzag layout)
-                fillRow(row, CRGB::Black, 0);  // Clear the row first
+
+                int startIndex = row * ROW_LENGTH;
+                int progressLeds = (percent * ROW_LENGTH) / 100;
+
+                // Fill progress bar portion with green
+                CRGB scaledProgress = CLAUDE_COLOR_PROGRESS;
+                scaledProgress.nscale8(CLAUDE_MAX_BRIGHTNESS);
+                for (int i = 0; i < progressLeds; i++) {
+                    leds[startIndex + i] = scaledProgress;
+                }
+
+                // Clear remaining portion
+                for (int i = progressLeds; i < ROW_LENGTH; i++) {
+                    leds[startIndex + i] = CRGB::Black;
+                }
+
+                // If context is 100%, just show full green (no idle LED needed)
+                if (percent >= 100) {
+                    continue;
+                }
+
+                // Show single blinking LED in the status area (after progress bar)
                 // For zigzag: flip sides - even rows use end, odd rows use start
-                int firstLedInChain = (row % 2 == 0) ? ((row + 1) * ROW_LENGTH - 1) : (row * ROW_LENGTH);
-                CRGB scaledColor = color;
-                scaledColor.nscale8(brightness);
-                leds[firstLedInChain] = scaledColor;
-                continue;  // Skip the fillRow at the end
+                int firstLedInChain;
+                if (row % 2 == 0) {
+                    // Even rows: LED chain starts at end of row
+                    // Place idle LED at the rightmost position (after progress bar)
+                    firstLedInChain = (row + 1) * ROW_LENGTH - 1;
+                } else {
+                    // Odd rows: LED chain starts at beginning of row
+                    // Place idle LED just after the progress bar
+                    firstLedInChain = startIndex + progressLeds;
+                }
+
+                // Make sure the idle LED is in the status area (not in progress bar)
+                if (firstLedInChain >= startIndex + progressLeds && firstLedInChain < startIndex + ROW_LENGTH) {
+                    CRGB scaledColor = color;
+                    scaledColor.nscale8(brightness);
+                    leds[firstLedInChain] = scaledColor;
+                }
+                continue;
             }
             default:
                 statePhase = 0;

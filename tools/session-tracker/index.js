@@ -73,7 +73,8 @@ function loadSessions() {
           lastState: s.lastState,
           lastUpdate: s.lastUpdate,
           cwd: s.cwd,
-          name: s.name
+          name: s.name,
+          contextPercent: s.contextPercent || 0
         });
       });
     }
@@ -125,7 +126,8 @@ function assignRow(sessionId, cwd) {
     lastState: 'idle',
     lastUpdate: Date.now(),
     cwd: cwd || '',
-    name: name
+    name: name,
+    contextPercent: 0
   });
 
   console.log(`Assigned row ${row} to session ${sessionId} (${name})`);
@@ -168,9 +170,9 @@ async function compactRows() {
     if (oldRow !== nextRow) {
       console.log(`Compacting: moving session ${sessionId} from row ${oldRow} to row ${nextRow}`);
       // Clear old row on ESP32
-      changes.push({ row: oldRow, state: 'offline' });
+      changes.push({ row: oldRow, state: 'offline', contextPercent: 0 });
       // Set new row on ESP32
-      changes.push({ row: nextRow, state: session.lastState });
+      changes.push({ row: nextRow, state: session.lastState, contextPercent: session.contextPercent || 0 });
     }
     session.row = nextRow;
     rowsInUse[nextRow] = sessionId;
@@ -182,7 +184,7 @@ async function compactRows() {
   // Send all changes to ESP32
   for (const change of changes) {
     try {
-      await updateEsp32(change.row, change.state);
+      await updateEsp32WithContext(change.row, change.state, change.contextPercent);
     } catch (err) {
       console.error(`Failed to update ESP32 for row ${change.row}:`, err.message);
     }
@@ -214,6 +216,27 @@ async function updateEsp32(row, state) {
 // Clear a row on ESP32
 async function clearEsp32Row(row) {
   return updateEsp32(row, 'offline');
+}
+
+// Send state update to ESP32 with context percentage
+async function updateEsp32WithContext(row, state, contextPercent) {
+  return new Promise((resolve, reject) => {
+    const percent = Math.round(contextPercent || 0);
+    const url = `http://${config.esp32_ip}/claude/row?row=${row}&state=${state}&contextPercent=${percent}`;
+    console.log(`Sending to ESP32: ${url}`);
+
+    http.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        console.log(`ESP32 response: ${data}`);
+        resolve(data);
+      });
+    }).on('error', (err) => {
+      console.error(`ESP32 error: ${err.message}`);
+      reject(err);
+    });
+  });
 }
 
 // Map hook events to LED states
@@ -279,7 +302,7 @@ function checkIdleTimeouts() {
       session.lastState = 'idle';
       session.lastUpdate = now;
       saveSessions();
-      updateEsp32(session.row, 'idle').catch(err => {
+      updateEsp32WithContext(session.row, 'idle', session.contextPercent || 0).catch(err => {
         console.error('Failed to update ESP32 on timeout:', err.message);
       });
     }
@@ -322,6 +345,35 @@ app.post('/event', async (req, res) => {
         await compactRows();
       }
       return res.json({ success: true, message: 'Session ended' });
+    } else if (hookEvent === 'Status') {
+      // Status events contain context window usage information
+      // Extract context percentage and update ESP32
+      if (!sessions.has(sessionId)) {
+        // Session not registered, auto-register it
+        row = assignRow(sessionId, cwd);
+        if (row === -1) {
+          return res.status(503).json({ error: 'No free rows available' });
+        }
+      }
+
+      const session = sessions.get(sessionId);
+      row = session.row;
+
+      // Extract context window percentage
+      if (event.context_window && typeof event.context_window.used_percentage === 'number') {
+        session.contextPercent = event.context_window.used_percentage;
+        session.lastUpdate = Date.now();
+        saveSessions();
+
+        // Send context update to ESP32 with current state
+        try {
+          await updateEsp32WithContext(row, session.lastState, session.contextPercent);
+        } catch (err) {
+          console.error('Failed to update ESP32 with context:', err.message);
+        }
+      }
+
+      return res.json({ success: true, row, contextPercent: session.contextPercent });
     } else {
       // Get existing session
       if (!sessions.has(sessionId)) {
@@ -351,9 +403,10 @@ app.post('/event', async (req, res) => {
         saveSessions();
       }
 
-      // Send to ESP32
+      // Send to ESP32 with context percentage
       try {
-        await updateEsp32(row, state);
+        const contextPercent = session ? session.contextPercent : 0;
+        await updateEsp32WithContext(row, state, contextPercent);
       } catch (err) {
         // ESP32 might be offline, but we still track state
         console.error('Failed to update ESP32:', err.message);
@@ -377,7 +430,8 @@ app.get('/status', (req, res) => {
         row: index,
         sessionId: sessionId || null,
         state: session ? session.lastState : 'offline',
-        name: session ? session.name : null
+        name: session ? session.name : null,
+        contextPercent: session ? session.contextPercent : 0
       };
     })
   };
@@ -389,7 +443,8 @@ app.get('/status', (req, res) => {
       lastState: value.lastState,
       lastUpdate: new Date(value.lastUpdate).toISOString(),
       cwd: value.cwd,
-      name: value.name
+      name: value.name,
+      contextPercent: value.contextPercent || 0
     });
   });
 
@@ -427,10 +482,10 @@ app.get('/resync', async (req, res) => {
   const results = [];
   for (const [sessionId, session] of sessions) {
     try {
-      await updateEsp32(session.row, session.lastState);
-      results.push({ row: session.row, state: session.lastState, success: true });
+      await updateEsp32WithContext(session.row, session.lastState, session.contextPercent || 0);
+      results.push({ row: session.row, state: session.lastState, contextPercent: session.contextPercent || 0, success: true });
     } catch (err) {
-      results.push({ row: session.row, state: session.lastState, success: false, error: err.message });
+      results.push({ row: session.row, state: session.lastState, contextPercent: session.contextPercent || 0, success: false, error: err.message });
     }
   }
 

@@ -489,6 +489,13 @@ void setup()
 
     ClaudeState state = ClaudeStatus::parseState(stateStr);
 
+    // Check for optional context percentage (0-100)
+    int contextPercent = 0;
+    if (request->hasParam("contextPercent")) {
+      contextPercent = request->getParam("contextPercent")->value().toInt();
+      contextPercent = constrain(contextPercent, 0, 100);
+    }
+
     // Check for optional custom color
     if (request->hasParam("color")) {
       String colorStr = request->getParam("color")->value();
@@ -500,13 +507,16 @@ void setup()
       claudeStatus.setRowState(row, state);
     }
 
+    // Set context percentage for progress bar
+    claudeStatus.setContextPercent(row, contextPercent);
+
     // When Claude mode is active, immediately apply to LEDs
     if (claudeStatus.isActive()) {
       claudeStatus.applyToLeds();
       FastLED.show();
     }
 
-    String json = "{\"success\":true,\"row\":" + String(row) + ",\"state\":\"" + stateStr + "\"}";
+    String json = "{\"success\":true,\"row\":" + String(row) + ",\"state\":\"" + stateStr + "\",\"contextPercent\":" + String(contextPercent) + "}";
     request->send(200, "application/json", json);
   });
 
@@ -532,7 +542,7 @@ void setup()
         case ClaudeState::Error: stateStr = "error"; break;
         default: stateStr = "offline"; break;
       }
-      json += "\"" + stateStr + "\"";
+      json += "{\"state\":\"" + stateStr + "\",\"contextPercent\":" + String(claudeStatus.getContextPercent(i)) + "}";
       if (i < NUM_ROWS - 1) json += ",";
     }
     json += "]}";

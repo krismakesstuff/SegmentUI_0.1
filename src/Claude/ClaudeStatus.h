@@ -26,6 +26,7 @@ enum class ClaudeState {
 #define CLAUDE_COLOR_WORKING_B CRGB(0x80, 0x55, 0x00) // Yellow/amber (dimmed)
 #define CLAUDE_COLOR_WAITING CRGB(0x00, 0xC0, 0xFF)  // Bright cyan (scaled by brightness)
 #define CLAUDE_COLOR_ERROR   CRGB(0x80, 0x00, 0x00)  // Dimmed red
+#define CLAUDE_COLOR_PROGRESS CRGB(0x00, 0x80, 0x00) // Green for context window progress bar
 
 // Animation speeds (ms) - slower for subtlety
 #define CLAUDE_WORK_CYCLE_SPEED 4000   // Slow color alternation for working
@@ -62,6 +63,12 @@ public:
     // Apply current states to LED array
     void applyToLeds();
 
+    // Set context window percentage for a row (0-100)
+    void setContextPercent(int row, uint8_t percent);
+
+    // Get context window percentage for a row
+    uint8_t getContextPercent(int row);
+
     // Parse state string to enum
     static ClaudeState parseState(const String& stateStr);
 
@@ -73,6 +80,7 @@ private:
     ClaudeState rowStates[NUM_ROWS];
     CRGB rowColors[NUM_ROWS];       // Custom colors (optional override)
     bool useCustomColor[NUM_ROWS];  // Whether to use custom color
+    uint8_t contextPercent[NUM_ROWS]; // Context window usage (0-100) for progress bar
     unsigned long lastUpdateTime;
     float animationPhase;           // 0.0 to 1.0 for smooth animations
 
@@ -81,6 +89,9 @@ private:
 
     // Fill a specific row with color and brightness
     void fillRow(int row, CRGB color, uint8_t brightness = 255);
+
+    // Fill a row with progress bar on left, status color on right
+    void fillRowWithProgress(int row, CRGB statusColor, uint8_t statusBrightness, uint8_t percent);
 };
 
 #endif // CLAUDE_STATUS_H

@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "Status": [{
+      "command": "curl -s -X POST -H \"Content-Type: application/json\" -d @- http://localhost:5544/event",
+      "timeout": 5000
+    }],
+    "SessionStart": [{
+      "command": "curl -s -X POST -H \"Content-Type: application/json\" -d @- http://localhost:5544/event",
+      "timeout": 5000
+    }],
+    "PreToolUse": [{
+      "command": "curl -s -X POST -H \"Content-Type: application/json\" -d @- http://localhost:5544/event",
+      "timeout": 5000
+    }],
+    "PostToolUse": [{
+      "command": "curl -s -X POST -H \"Content-Type: application/json\" -d @- http://localhost:5544/event",
+      "timeout": 5000
+    }],
+    "Notification": [{
+      "command": "curl -s -X POST -H \"Content-Type: application/json\" -d @- http://localhost:5544/event",
+      "timeout": 5000
+    }],
+    "Stop": [{
+      "command": "curl -s -X POST -H \"Content-Type: application/json\" -d @- http://localhost:5544/event",
+      "timeout": 5000
+    }]
+  }
+}
