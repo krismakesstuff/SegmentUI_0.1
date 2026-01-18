@@ -104,9 +104,10 @@ uint8_t ClaudeStatus::getAnimatedBrightness(ClaudeState state, float phase) {
             return (uint8_t)(brightness * CLAUDE_MAX_BRIGHTNESS);
         }
         case ClaudeState::Waiting: {
-            // Breathing: smooth sine wave between 25% and 100% of max
+            // Breathing: subtle sine wave between 70% and 100% of max
+            const float WAITING_MIN = 0.70;
             float wave = (sin(phase * 2 * PI) + 1.0) / 2.0;  // 0 to 1
-            float brightness = MIN_BRIGHTNESS + (1.0 - MIN_BRIGHTNESS) * wave;
+            float brightness = WAITING_MIN + (1.0 - WAITING_MIN) * wave;
             return (uint8_t)(brightness * CLAUDE_MAX_BRIGHTNESS);
         }
         case ClaudeState::Error: {
@@ -156,14 +157,25 @@ void ClaudeStatus::fillRowWithProgress(int row, CRGB statusColor, uint8_t status
     CRGB scaledStatus = statusColor;
     scaledStatus.nscale8(statusBrightness);
 
-    // Fill progress bar (left side)
-    for (int i = 0; i < progressLeds; i++) {
-        leds[startIndex + i] = scaledProgress;
-    }
-
-    // Fill status animation (right side)
-    for (int i = progressLeds; i < ROW_LENGTH; i++) {
-        leds[startIndex + i] = scaledStatus;
+    // Serpentine pattern: even/odd rows have opposite index directions
+    // Even rows (0, 2, 4): index 0 = RIGHT, so progress at HIGH indices
+    // Odd rows (1, 3): index 0 = LEFT, so progress at LOW indices
+    if (row % 2 == 0) {
+        // Even row: HIGH indices = LEFT side
+        for (int i = ROW_LENGTH - progressLeds; i < ROW_LENGTH; i++) {
+            leds[startIndex + i] = scaledProgress;
+        }
+        for (int i = 0; i < ROW_LENGTH - progressLeds; i++) {
+            leds[startIndex + i] = scaledStatus;
+        }
+    } else {
+        // Odd row: LOW indices = LEFT side
+        for (int i = 0; i < progressLeds; i++) {
+            leds[startIndex + i] = scaledProgress;
+        }
+        for (int i = progressLeds; i < ROW_LENGTH; i++) {
+            leds[startIndex + i] = scaledStatus;
+        }
     }
 }
 
@@ -236,16 +248,26 @@ void ClaudeStatus::applyToLeds() {
                 int startIndex = row * ROW_LENGTH;
                 int progressLeds = (percent * ROW_LENGTH) / 100;
 
-                // Fill progress bar portion with green
                 CRGB scaledProgress = CLAUDE_COLOR_PROGRESS;
                 scaledProgress.nscale8(CLAUDE_MAX_BRIGHTNESS);
-                for (int i = 0; i < progressLeds; i++) {
-                    leds[startIndex + i] = scaledProgress;
-                }
 
-                // Clear remaining portion
-                for (int i = progressLeds; i < ROW_LENGTH; i++) {
-                    leds[startIndex + i] = CRGB::Black;
+                // Serpentine: even rows HIGH=LEFT, odd rows LOW=LEFT
+                if (row % 2 == 0) {
+                    // Even row: progress at HIGH indices (left side)
+                    for (int i = ROW_LENGTH - progressLeds; i < ROW_LENGTH; i++) {
+                        leds[startIndex + i] = scaledProgress;
+                    }
+                    for (int i = 0; i < ROW_LENGTH - progressLeds; i++) {
+                        leds[startIndex + i] = CRGB::Black;
+                    }
+                } else {
+                    // Odd row: progress at LOW indices (left side)
+                    for (int i = 0; i < progressLeds; i++) {
+                        leds[startIndex + i] = scaledProgress;
+                    }
+                    for (int i = progressLeds; i < ROW_LENGTH; i++) {
+                        leds[startIndex + i] = CRGB::Black;
+                    }
                 }
 
                 // If context is 100%, just show full green (no idle LED needed)
@@ -253,25 +275,18 @@ void ClaudeStatus::applyToLeds() {
                     continue;
                 }
 
-                // Show single blinking LED in the status area (after progress bar)
-                // For zigzag: flip sides - even rows use end, odd rows use start
-                int firstLedInChain;
+                // Show single blinking idle LED right after the progress bar
+                int idleLedIndex;
                 if (row % 2 == 0) {
-                    // Even rows: LED chain starts at end of row
-                    // Place idle LED at the rightmost position (after progress bar)
-                    firstLedInChain = (row + 1) * ROW_LENGTH - 1;
+                    // Even row: idle LED is right before progress starts
+                    idleLedIndex = startIndex + (ROW_LENGTH - progressLeds - 1);
                 } else {
-                    // Odd rows: LED chain starts at beginning of row
-                    // Place idle LED just after the progress bar
-                    firstLedInChain = startIndex + progressLeds;
+                    // Odd row: idle LED is right after progress
+                    idleLedIndex = startIndex + progressLeds;
                 }
-
-                // Make sure the idle LED is in the status area (not in progress bar)
-                if (firstLedInChain >= startIndex + progressLeds && firstLedInChain < startIndex + ROW_LENGTH) {
-                    CRGB scaledColor = color;
-                    scaledColor.nscale8(brightness);
-                    leds[firstLedInChain] = scaledColor;
-                }
+                CRGB scaledColor = color;
+                scaledColor.nscale8(brightness);
+                leds[idleLedIndex] = scaledColor;
                 continue;
             }
             default:

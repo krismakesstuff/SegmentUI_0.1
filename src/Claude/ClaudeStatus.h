@@ -26,11 +26,11 @@ enum class ClaudeState {
 #define CLAUDE_COLOR_WORKING_B CRGB(0x80, 0x55, 0x00) // Yellow/amber (dimmed)
 #define CLAUDE_COLOR_WAITING CRGB(0x00, 0xC0, 0xFF)  // Bright cyan (scaled by brightness)
 #define CLAUDE_COLOR_ERROR   CRGB(0x80, 0x00, 0x00)  // Dimmed red
-#define CLAUDE_COLOR_PROGRESS CRGB(0x00, 0x80, 0x00) // Green for context window progress bar
+#define CLAUDE_COLOR_PROGRESS CRGB(0xFF, 0x50, 0x00) // Orange for context window progress bar
 
 // Animation speeds (ms) - slower for subtlety
 #define CLAUDE_WORK_CYCLE_SPEED 4000   // Slow color alternation for working
-#define CLAUDE_BREATHE_SPEED 333       // Breathing for waiting
+#define CLAUDE_BREATHE_SPEED 2500      // Breathing for waiting (slow, subtle)
 #define CLAUDE_ERROR_FADE_SPEED 3000   // Gentle fade for error
 #define CLAUDE_IDLE_BLINK_SPEED 2500   // Single LED blink for idle (slow pulse)
 
