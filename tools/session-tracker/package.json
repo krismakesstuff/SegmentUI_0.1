@@ -1,0 +1,12 @@
+{
+  "name": "claude-session-tracker",
+  "version": "1.0.0",
+  "description": "Session tracker for Claude Code LED status grid",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

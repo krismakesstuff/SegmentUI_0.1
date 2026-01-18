@@ -13,6 +13,7 @@
 #include "Globals.h"
 #include "Canvas/Canvas.h"
 #include "Kasa/KasaManager.h"
+#include "Claude/ClaudeStatus.h"
 #include "index"
 #include "credentials.h"
 
@@ -50,6 +51,9 @@ Canvas canvas{};
 
 // Kasa device manager
 KasaManager kasaManager;
+
+// Claude session status manager
+ClaudeStatus claudeStatus;
 
 // areas to draw on canvas
 Rectangle rightHalf{0, 0, ROW_LENGTH/2, NUM_ROWS}; 
@@ -467,6 +471,73 @@ void setup()
     }
   });
 
+  // Claude Code status endpoints
+  // Set row state: GET /claude/row?row=N&state=STATE[&color=RRGGBB]
+  server.on("/claude/row", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!request->hasParam("row") || !request->hasParam("state")) {
+      request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing row or state parameter\"}");
+      return;
+    }
+
+    int row = request->getParam("row")->value().toInt();
+    String stateStr = request->getParam("state")->value();
+
+    if (row < 0 || row >= NUM_ROWS) {
+      request->send(400, "application/json", "{\"success\":false,\"error\":\"Row must be 0-4\"}");
+      return;
+    }
+
+    ClaudeState state = ClaudeStatus::parseState(stateStr);
+
+    // Check for optional custom color
+    if (request->hasParam("color")) {
+      String colorStr = request->getParam("color")->value();
+      // Parse hex color (RRGGBB format)
+      long colorValue = strtol(colorStr.c_str(), NULL, 16);
+      CRGB color((colorValue >> 16) & 0xFF, (colorValue >> 8) & 0xFF, colorValue & 0xFF);
+      claudeStatus.setRowState(row, state, color);
+    } else {
+      claudeStatus.setRowState(row, state);
+    }
+
+    // When Claude mode is active, immediately apply to LEDs
+    if (claudeStatus.isActive()) {
+      claudeStatus.applyToLeds();
+      FastLED.show();
+    }
+
+    String json = "{\"success\":true,\"row\":" + String(row) + ",\"state\":\"" + stateStr + "\"}";
+    request->send(200, "application/json", json);
+  });
+
+  // Clear all Claude rows: GET /claude/clear
+  server.on("/claude/clear", HTTP_GET, [](AsyncWebServerRequest *request) {
+    claudeStatus.clearAll();
+    FastLED.show();
+    request->send(200, "application/json", "{\"success\":true}");
+  });
+
+  // Get Claude status: GET /claude/status
+  server.on("/claude/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String json = "{\"active\":" + String(claudeStatus.isActive() ? "true" : "false") + ",\"rows\":[";
+    for (int i = 0; i < NUM_ROWS; i++) {
+      ClaudeState state = claudeStatus.getRowState(i);
+      String stateStr;
+      switch (state) {
+        case ClaudeState::Idle: stateStr = "idle"; break;
+        case ClaudeState::Thinking: stateStr = "thinking"; break;
+        case ClaudeState::Tool: stateStr = "tool"; break;
+        case ClaudeState::Waiting: stateStr = "waiting"; break;
+        case ClaudeState::Error: stateStr = "error"; break;
+        default: stateStr = "offline"; break;
+      }
+      json += "\"" + stateStr + "\"";
+      if (i < NUM_ROWS - 1) json += ",";
+    }
+    json += "]}";
+    request->send(200, "application/json", json);
+  });
+
   // Start server
   server.begin();
 }
@@ -478,18 +549,22 @@ void loop()
   #if PRINT_CANVAS_DRAW_LOOP
     Serial.println("Drawing canvas");
   #endif
-  
-  
-  if(canvas.animating())
+
+  // When Claude status mode is active, it takes over LED control
+  if (claudeStatus.isActive()) {
+    claudeStatus.update();
+    FastLED.show();
+  }
+  else if(canvas.animating())
   {
     canvas.animate();
-  }  
-  else if(canvas.drawNewState()) 
+  }
+  else if(canvas.drawNewState())
   {
     canvas.draw();
   }
 
-  
+
   // delay to control frame rate
   #if DELAY_REDRAW
     delay(REDRAW_DELAY_MS);
