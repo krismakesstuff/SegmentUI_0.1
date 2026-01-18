@@ -31,7 +31,7 @@ enum class ClaudeState {
 #define CLAUDE_WORK_CYCLE_SPEED 4000   // Slow color alternation for working
 #define CLAUDE_BREATHE_SPEED 333       // Breathing for waiting
 #define CLAUDE_ERROR_FADE_SPEED 3000   // Gentle fade for error
-#define CLAUDE_IDLE_BLINK_SPEED 300    // Single LED blink for idle (10% faster than waiting)
+#define CLAUDE_IDLE_BLINK_SPEED 2500   // Single LED blink for idle (slow pulse)
 
 class ClaudeStatus {
 public:

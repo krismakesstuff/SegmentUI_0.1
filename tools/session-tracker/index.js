@@ -140,11 +140,55 @@ function freeRow(sessionId) {
   }
 
   const session = sessions.get(sessionId);
-  rowsInUse[session.row] = null;
+  const freedRow = session.row;
+  rowsInUse[freedRow] = null;
   sessions.delete(sessionId);
-  console.log(`Freed row ${session.row} from session ${sessionId}`);
+  console.log(`Freed row ${freedRow} from session ${sessionId}`);
   saveSessions();
-  return session.row;
+  return freedRow;
+}
+
+// Compact rows to eliminate gaps - returns array of row changes to send to ESP32
+async function compactRows() {
+  const changes = [];
+
+  // Find all active sessions sorted by their current row
+  const activeSessions = Array.from(sessions.entries())
+    .sort((a, b) => a[1].row - b[1].row);
+
+  // Reset rowsInUse
+  for (let i = 0; i < config.max_sessions; i++) {
+    rowsInUse[i] = null;
+  }
+
+  // Reassign rows starting from 0
+  let nextRow = 0;
+  for (const [sessionId, session] of activeSessions) {
+    const oldRow = session.row;
+    if (oldRow !== nextRow) {
+      console.log(`Compacting: moving session ${sessionId} from row ${oldRow} to row ${nextRow}`);
+      // Clear old row on ESP32
+      changes.push({ row: oldRow, state: 'offline' });
+      // Set new row on ESP32
+      changes.push({ row: nextRow, state: session.lastState });
+    }
+    session.row = nextRow;
+    rowsInUse[nextRow] = sessionId;
+    nextRow++;
+  }
+
+  saveSessions();
+
+  // Send all changes to ESP32
+  for (const change of changes) {
+    try {
+      await updateEsp32(change.row, change.state);
+    } catch (err) {
+      console.error(`Failed to update ESP32 for row ${change.row}:`, err.message);
+    }
+  }
+
+  return changes;
 }
 
 // Send state update to ESP32
@@ -183,10 +227,17 @@ function hookEventToState(hookEvent, toolName, eventData) {
       if (toolName === 'AskUserQuestion') {
         return 'waiting';
       }
+      // Task tool spawns background agents - keep as tool while running
       return 'tool';
 
     case 'PostToolUse':
-      // After tool completes, Claude is thinking about the result
+      // Check if this was a background task launch (Task tool with run_in_background)
+      if (toolName === 'Task' && eventData.tool_input && eventData.tool_input.run_in_background) {
+        // Background task launched - return to idle since main session is waiting
+        return 'idle';
+      }
+      // After tool completes, briefly thinking then usually goes idle
+      // Return 'thinking' but we'll also set a timeout to go idle
       return 'thinking';
 
     case 'Notification':
@@ -194,6 +245,11 @@ function hookEventToState(hookEvent, toolName, eventData) {
       if (eventData && eventData.notification_type === 'idle_prompt') {
         // "Claude is waiting for your input" = idle state
         return 'idle';
+      }
+      // Background task completion notification
+      if (eventData && eventData.notification_type === 'task_notification') {
+        // A background task finished - main session might still be idle
+        return null; // Don't change state, let the main session's state persist
       }
       // Other notifications are informational, don't change state
       return null;
@@ -209,6 +265,29 @@ function hookEventToState(hookEvent, toolName, eventData) {
       return null;
   }
 }
+
+// Timeout to auto-set idle if no activity (ms)
+const IDLE_TIMEOUT = 10000; // 10 seconds
+
+// Check for stale sessions and set them to idle
+function checkIdleTimeouts() {
+  const now = Date.now();
+  sessions.forEach((session, sessionId) => {
+    // If session is in thinking state and no update for IDLE_TIMEOUT, assume idle
+    if (session.lastState === 'thinking' && (now - session.lastUpdate) > IDLE_TIMEOUT) {
+      console.log(`Session ${sessionId} timed out from thinking -> idle`);
+      session.lastState = 'idle';
+      session.lastUpdate = now;
+      saveSessions();
+      updateEsp32(session.row, 'idle').catch(err => {
+        console.error('Failed to update ESP32 on timeout:', err.message);
+      });
+    }
+  });
+}
+
+// Run idle timeout check every 5 seconds
+setInterval(checkIdleTimeouts, 5000);
 
 // POST /event - receive hook events from Claude Code
 app.post('/event', async (req, res) => {
@@ -239,6 +318,8 @@ app.post('/event', async (req, res) => {
       row = freeRow(sessionId);
       if (row !== undefined) {
         await clearEsp32Row(row);
+        // Compact remaining rows to eliminate gaps
+        await compactRows();
       }
       return res.json({ success: true, message: 'Session ended' });
     } else {
@@ -339,8 +420,11 @@ app.post('/config', (req, res) => {
 // GET /resync - re-send current state for all active sessions to ESP32
 app.get('/resync', async (req, res) => {
   console.log('Resyncing all sessions to ESP32...');
-  const results = [];
 
+  // Compact rows first to eliminate gaps
+  await compactRows();
+
+  const results = [];
   for (const [sessionId, session] of sessions) {
     try {
       await updateEsp32(session.row, session.lastState);
@@ -351,6 +435,13 @@ app.get('/resync', async (req, res) => {
   }
 
   res.json({ success: true, synced: results.length, results });
+});
+
+// GET /compact - manually compact rows to eliminate gaps
+app.get('/compact', async (req, res) => {
+  console.log('Compacting rows...');
+  const changes = await compactRows();
+  res.json({ success: true, changes });
 });
 
 // GET /clear - clear all sessions and ESP32 rows

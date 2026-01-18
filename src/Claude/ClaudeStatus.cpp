@@ -186,12 +186,13 @@ void ClaudeStatus::applyToLeds() {
                 statePhase = fmod(animationPhase * 1000.0 / CLAUDE_IDLE_BLINK_SPEED, 1.0);
                 color = useCustomColor[row] ? rowColors[row] : CLAUDE_COLOR_IDLE;
                 uint8_t brightness = getAnimatedBrightness(state, statePhase);
-                // Single LED at the start of the row
+                // Single LED - first in daisy chain for this row (zigzag layout)
                 fillRow(row, CRGB::Black, 0);  // Clear the row first
-                int firstLed = row * ROW_LENGTH;
+                // For zigzag: flip sides - even rows use end, odd rows use start
+                int firstLedInChain = (row % 2 == 0) ? ((row + 1) * ROW_LENGTH - 1) : (row * ROW_LENGTH);
                 CRGB scaledColor = color;
                 scaledColor.nscale8(brightness);
-                leds[firstLed] = scaledColor;
+                leds[firstLedInChain] = scaledColor;
                 continue;  // Skip the fillRow at the end
             }
             default:
