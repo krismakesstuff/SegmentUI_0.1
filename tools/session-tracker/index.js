@@ -2,10 +2,20 @@ const express = require('express');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 // Load config
 const configPath = path.join(__dirname, 'config.json');
 const sessionsPath = path.join(__dirname, 'sessions.json');
+const ptsSessionsPath = path.join(os.homedir(), '.claude', 'pts-active-sessions.json');
+
+// Context window sizes per model (in tokens)
+const CONTEXT_WINDOWS = {
+  'Opus 4.5': 200000,
+  'Sonnet 4': 200000,
+  'Haiku 3.5': 200000,
+  'default': 200000
+};
 let config = {
   esp32_ip: '192.168.1.100',
   port: 5544,
@@ -36,6 +46,9 @@ const sessions = new Map();
 
 // Track which rows are in use
 let rowsInUse = new Array(config.max_sessions).fill(null);
+
+// Tracking enabled state - when disabled, we don't process events or send updates
+let trackingEnabled = true;
 
 // Extract project name from cwd path
 function getProjectName(cwd) {
@@ -259,6 +272,10 @@ function hookEventToState(hookEvent, toolName, eventData) {
         // Background task launched - return to idle since main session is waiting
         return 'idle';
       }
+      // AskUserQuestion just completed - user answered, go to idle
+      if (toolName === 'AskUserQuestion') {
+        return 'idle';
+      }
       // After tool completes, briefly thinking then usually goes idle
       // Return 'thinking' but we'll also set a timeout to go idle
       return 'thinking';
@@ -294,6 +311,7 @@ const IDLE_TIMEOUT = 10000; // 10 seconds
 
 // Check for stale sessions and set them to idle
 function checkIdleTimeouts() {
+  if (!trackingEnabled) return;
   const now = Date.now();
   sessions.forEach((session, sessionId) => {
     // If session is in thinking state and no update for IDLE_TIMEOUT, assume idle
@@ -312,8 +330,53 @@ function checkIdleTimeouts() {
 // Run idle timeout check every 5 seconds
 setInterval(checkIdleTimeouts, 5000);
 
+// Poll PTS sessions file for context window percentages
+function pollContextPercentages() {
+  if (!trackingEnabled) return;
+  if (!fs.existsSync(ptsSessionsPath)) {
+    return;
+  }
+
+  try {
+    const ptsData = JSON.parse(fs.readFileSync(ptsSessionsPath, 'utf8'));
+    const ptsSessions = ptsData.sessions || {};
+
+    // Update context percentages for active sessions
+    sessions.forEach((session, sessionId) => {
+      const ptsSession = ptsSessions[sessionId];
+      if (ptsSession && ptsSession.totalTokens) {
+        const model = ptsSession.model || 'default';
+        const contextWindow = CONTEXT_WINDOWS[model] || CONTEXT_WINDOWS['default'];
+        const newPercent = Math.min(100, Math.round((ptsSession.totalTokens / contextWindow) * 100));
+
+        // Only update if changed
+        if (newPercent !== session.contextPercent) {
+          console.log(`Session ${sessionId} context: ${session.contextPercent}% -> ${newPercent}% (${ptsSession.totalTokens}/${contextWindow} tokens)`);
+          session.contextPercent = newPercent;
+          saveSessions();
+
+          // Send update to ESP32
+          updateEsp32WithContext(session.row, session.lastState, newPercent).catch(err => {
+            console.error('Failed to update ESP32 with context:', err.message);
+          });
+        }
+      }
+    });
+  } catch (err) {
+    // Silently ignore errors - file might be being written
+  }
+}
+
+// Poll context percentages every 3 seconds
+setInterval(pollContextPercentages, 3000);
+
 // POST /event - receive hook events from Claude Code
 app.post('/event', async (req, res) => {
+  // Skip processing if tracking is disabled
+  if (!trackingEnabled) {
+    return res.json({ success: true, message: 'Tracking disabled, event ignored' });
+  }
+
   try {
     const event = req.body;
     console.log('Received event:', JSON.stringify(event, null, 2));
@@ -423,6 +486,7 @@ app.post('/event', async (req, res) => {
 // GET /status - debug endpoint to view current state
 app.get('/status', (req, res) => {
   const status = {
+    enabled: trackingEnabled,
     sessions: [],
     rows: rowsInUse.map((sessionId, index) => {
       const session = sessionId && sessions.has(sessionId) ? sessions.get(sessionId) : null;
@@ -520,6 +584,76 @@ app.get('/clear', async (req, res) => {
   }
 
   res.json({ success: true, message: 'All sessions cleared' });
+});
+
+// GET /enable - enable tracking
+app.get('/enable', async (req, res) => {
+  trackingEnabled = true;
+  console.log('Tracking ENABLED');
+
+  // Resync all sessions to ESP32
+  for (const [sessionId, session] of sessions) {
+    try {
+      await updateEsp32WithContext(session.row, session.lastState, session.contextPercent || 0);
+    } catch (err) {
+      console.error(`Failed to sync session ${sessionId}:`, err.message);
+    }
+  }
+
+  res.json({ success: true, enabled: true });
+});
+
+// GET /disable - disable tracking and clear ESP32
+app.get('/disable', async (req, res) => {
+  trackingEnabled = false;
+  console.log('Tracking DISABLED');
+
+  // Clear all rows on ESP32
+  try {
+    await new Promise((resolve, reject) => {
+      http.get(`http://${config.esp32_ip}/claude/clear`, (httpRes) => {
+        resolve();
+      }).on('error', reject);
+    });
+  } catch (err) {
+    console.error('Failed to clear ESP32:', err.message);
+  }
+
+  res.json({ success: true, enabled: false });
+});
+
+// GET /toggle - toggle tracking on/off
+app.get('/toggle', async (req, res) => {
+  if (trackingEnabled) {
+    // Disable
+    trackingEnabled = false;
+    console.log('Tracking DISABLED (toggled)');
+
+    try {
+      await new Promise((resolve, reject) => {
+        http.get(`http://${config.esp32_ip}/claude/clear`, (httpRes) => {
+          resolve();
+        }).on('error', reject);
+      });
+    } catch (err) {
+      console.error('Failed to clear ESP32:', err.message);
+    }
+  } else {
+    // Enable
+    trackingEnabled = true;
+    console.log('Tracking ENABLED (toggled)');
+
+    // Resync all sessions
+    for (const [sessionId, session] of sessions) {
+      try {
+        await updateEsp32WithContext(session.row, session.lastState, session.contextPercent || 0);
+      } catch (err) {
+        console.error(`Failed to sync session ${sessionId}:`, err.message);
+      }
+    }
+  }
+
+  res.json({ success: true, enabled: trackingEnabled });
 });
 
 // Start server

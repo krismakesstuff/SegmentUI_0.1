@@ -767,49 +767,64 @@ const char index_html[] PROGMEM = R"rawliteral(
     var claudeSessions = []; // From session tracker with name, state
 
     function claudeToggle() {
-      var endpoint = claudeEnabled ? '/claude/disable' : '/claude/enable';
-      send(endpoint, function(resp) {
-        var data = JSON.parse(resp);
-        if (data.success) {
-          claudeEnabled = data.enabled;
-          renderClaudeRows();
-          // If enabling, ask session tracker to resync active sessions
-          if (claudeEnabled) {
-            var x = new XMLHttpRequest();
-            x.open('GET', 'http://localhost:5544/resync', true);
-            x.onload = function() { claudeRefresh(); };
-            x.send();
-          }
+      // Toggle session tracker first
+      var x = new XMLHttpRequest();
+      x.open('GET', 'http://localhost:5544/toggle', true);
+      x.timeout = 2000;
+      x.onload = function() {
+        if (x.status === 200) {
+          var trackerData = JSON.parse(x.responseText);
+          claudeEnabled = trackerData.enabled;
+          // Also sync ESP32's local state
+          var espEndpoint = claudeEnabled ? '/claude/enable' : '/claude/disable';
+          send(espEndpoint, function() {
+            claudeRefresh();
+          });
         }
-      });
+      };
+      x.onerror = x.ontimeout = function() {
+        // Fallback: just toggle ESP32's local state
+        var endpoint = claudeEnabled ? '/claude/disable' : '/claude/enable';
+        send(endpoint, function(resp) {
+          var data = JSON.parse(resp);
+          if (data.success) {
+            claudeEnabled = data.enabled;
+            renderClaudeRows();
+          }
+        });
+      };
+      x.send();
     }
 
     function claudeRefresh() {
-      // First get enabled state from ESP32
-      send('/claude/status', function(resp) {
-        var data = JSON.parse(resp);
-        claudeEnabled = data.enabled;
-
-        // Then get session details from session tracker
-        var x = new XMLHttpRequest();
-        x.open('GET', 'http://localhost:5544/status', true);
-        x.timeout = 2000;
-        x.onload = function() {
-          if (x.status === 200) {
-            var trackerData = JSON.parse(x.responseText);
-            claudeSessions = trackerData.rows || [];
-          }
-          renderClaudeRows();
-        };
-        x.onerror = x.ontimeout = function() {
-          // Fallback to ESP32-only data
+      // Get status from session tracker (primary source of truth)
+      var x = new XMLHttpRequest();
+      x.open('GET', 'http://localhost:5544/status', true);
+      x.timeout = 2000;
+      x.onload = function() {
+        if (x.status === 200) {
+          var trackerData = JSON.parse(x.responseText);
+          claudeEnabled = trackerData.enabled;
+          claudeSessions = trackerData.rows || [];
+          // Sync ESP32's enabled state with tracker
+          var espEndpoint = claudeEnabled ? '/claude/enable' : '/claude/disable';
+          send(espEndpoint, function() {
+            renderClaudeRows();
+          });
+        }
+      };
+      x.onerror = x.ontimeout = function() {
+        // Fallback: get state from ESP32
+        send('/claude/status', function(resp) {
+          var data = JSON.parse(resp);
+          claudeEnabled = data.enabled;
           claudeSessions = data.rows.map(function(state, i) {
             return { row: i, state: state, name: null };
           });
           renderClaudeRows();
-        };
-        x.send();
-      });
+        });
+      };
+      x.send();
     }
 
     function claudeResync() {
