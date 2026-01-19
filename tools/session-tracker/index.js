@@ -309,6 +309,13 @@ function hookEventToState(hookEvent, toolName, eventData) {
 // Timeout to auto-set idle if no activity (ms)
 const IDLE_TIMEOUT = 10000; // 10 seconds
 
+// Timeout to switch from 'tool' to 'waiting' if no PostToolUse received (ms)
+// This catches permission prompts where user needs to approve tool execution
+const PERMISSION_WAIT_TIMEOUT = 2500; // 2.5 seconds
+
+// Track pending tool timers per session
+const pendingToolTimers = new Map();
+
 // Check for stale sessions and set them to idle
 function checkIdleTimeouts() {
   if (!trackingEnabled) return;
@@ -455,6 +462,37 @@ app.post('/event', async (req, res) => {
         }
       }
       state = hookEventToState(hookEvent, event.tool_name, event);
+
+      // Handle permission wait timeout for tool use
+      if (hookEvent === 'PreToolUse' && state === 'tool') {
+        // Clear any existing timer for this session
+        if (pendingToolTimers.has(sessionId)) {
+          clearTimeout(pendingToolTimers.get(sessionId));
+        }
+        // Start timer - if PostToolUse doesn't come soon, switch to 'waiting'
+        const timerId = setTimeout(async () => {
+          pendingToolTimers.delete(sessionId);
+          const sess = sessions.get(sessionId);
+          if (sess && sess.lastState === 'tool') {
+            console.log(`Session ${sessionId} tool timeout -> waiting (permission prompt?)`);
+            sess.lastState = 'waiting';
+            sess.lastUpdate = Date.now();
+            saveSessions();
+            try {
+              await updateEsp32WithContext(sess.row, 'waiting', sess.contextPercent || 0);
+            } catch (err) {
+              console.error('Failed to update ESP32 on permission timeout:', err.message);
+            }
+          }
+        }, PERMISSION_WAIT_TIMEOUT);
+        pendingToolTimers.set(sessionId, timerId);
+      } else if (hookEvent === 'PostToolUse') {
+        // Tool completed - clear any pending timer
+        if (pendingToolTimers.has(sessionId)) {
+          clearTimeout(pendingToolTimers.get(sessionId));
+          pendingToolTimers.delete(sessionId);
+        }
+      }
     }
 
     if (state && row !== undefined && row >= 0) {
